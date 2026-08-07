@@ -25,6 +25,14 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "이음이 전방을 인식해 보행을 안내하려면 카메라 접근 권한이 필요합니다."
+        }
+      ]
+    ]
   }
 }
