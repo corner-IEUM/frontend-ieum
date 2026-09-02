@@ -1,11 +1,12 @@
 // screens/Walk.tsx
 import React, { useEffect, useState } from 'react';
-import { View, Text, TouchableOpacity, Vibration } from 'react-native';
+import { View, Text, TouchableOpacity, Vibration, StyleSheet } from 'react-native';
 import { Icon } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level } from '../theme';
 import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
+import { useLocationTracking } from '../hooks/useLocationTracking';
 
 interface Scene { level: Level; text: string; sub: string; objects: SceneObj[]; haptic?: boolean; traffic?: 'red' | 'green'; }
 
@@ -33,20 +34,20 @@ function TrafficCard({ state }: { state: 'red' | 'green' }) {
     ? { c: t.status.danger.fg, label: '빨간불 · 대기', text: '잠시 기다려 주세요' }
     : { c: t.status.safe.fg, label: '초록불 · 보행', text: '음향신호기 작동 중 · 길을 건너세요' };
   return (
-    <Card pad={16} tone={withAlpha(cfg.c, 0.6)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-      <View style={{ gap: 6, padding: 7, borderRadius: 12, backgroundColor: '#222a3a', borderWidth: 1, borderColor: t.border }}>
+    <Card pad={16} tone={withAlpha(cfg.c, 0.6)} style={styles.trafficCard}>
+      <View style={[styles.signalBox, { borderColor: t.border }]}>
         {(['red', 'green'] as const).map((sgn) => {
           const col = sgn === 'red' ? t.status.danger.fg : t.status.safe.fg;
           const on = sgn === state;
-          return <View key={sgn} style={{ width: 16, height: 16, borderRadius: 999, backgroundColor: on ? col : 'transparent', borderWidth: 2, borderColor: on ? col : t.textFaint, opacity: on ? 1 : 0.4 }} />;
+          return <View key={sgn} style={[styles.signalDot, { backgroundColor: on ? col : 'transparent', borderColor: on ? col : t.textFaint, opacity: on ? 1 : 0.4 }]} />;
         })}
       </View>
-      <View style={{ flex: 1 }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+      <View style={styles.trafficInfo}>
+        <View style={styles.trafficLabelRow}>
           <Icon name="traffic" size={18} color={cfg.c} sw={2.1} />
-          <Text style={{ fontSize: 16, fontWeight: '800', color: cfg.c }}>{cfg.label}</Text>
+          <Text style={[styles.trafficLabel, { color: cfg.c }]}>{cfg.label}</Text>
         </View>
-        <Text style={{ fontSize: 14.5, fontWeight: '600', color: t.textDim, marginTop: 3 }}>{cfg.text}</Text>
+        <Text style={[styles.trafficText, { color: t.textDim }]}>{cfg.text}</Text>
       </View>
     </Card>
   );
@@ -58,6 +59,7 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
   const [i, setI] = useState(0);
   const [haptic, setHaptic] = useState(false);
   const scene = WALK_SCENES[i];
+  const { location, errorMsg } = useLocationTracking(playing);
 
   useEffect(() => {
     if (!playing) return;
@@ -79,7 +81,7 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
   const step = (d: number) => { setPlaying(() => false); setI((v) => (v + d + WALK_SCENES.length) % WALK_SCENES.length); };
 
   return (
-    <View style={{ padding: 18, paddingTop: 4, gap: 14 }}>
+    <View style={styles.container}>
       <ModeHeader title="일반보행" icon="walk" right={<StatusPill level={scene.level} large />} />
 
       <View>
@@ -91,12 +93,12 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
 
       <CaptionBar level={scene.level} text={scene.text} sub={scene.sub} speaking={playing} big={big} />
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 2 }}>
+      <View style={styles.controlsRow}>
         <TouchableOpacity onPress={() => step(-1)} style={ctrlStyle(t)}><Icon name="chevronL" size={22} color={t.text} sw={2.4} /></TouchableOpacity>
-        <TouchableOpacity onPress={() => setPlaying((p) => !p)} style={[ctrlStyle(t), { flex: 1, gap: 8 }]}>
-          <Text style={{ fontWeight: '800', fontSize: 15, color: t.text }}>{playing ? '일시정지' : '자동 안내'}</Text>
-          <View style={{ flexDirection: 'row', gap: 5 }}>
-            {WALK_SCENES.map((_, k) => <View key={k} style={{ width: k === i ? 18 : 6, height: 6, borderRadius: 999, backgroundColor: k === i ? t.primary : t.border }} />)}
+        <TouchableOpacity onPress={() => setPlaying((p) => !p)} style={[ctrlStyle(t), styles.playButtonInner]}>
+          <Text style={[styles.playLabel, { color: t.text }]}>{playing ? '일시정지' : '자동 안내'}</Text>
+          <View style={styles.dotsRow}>
+            {WALK_SCENES.map((_, k) => <View key={k} style={[styles.dot, { width: k === i ? 18 : 6, backgroundColor: k === i ? t.primary : t.border }]} />)}
           </View>
         </TouchableOpacity>
         <TouchableOpacity onPress={() => step(1)} style={ctrlStyle(t)}><Icon name="chevron" size={22} color={t.text} sw={2.4} /></TouchableOpacity>
@@ -104,3 +106,19 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  trafficCard: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  signalBox: { gap: 6, padding: 7, borderRadius: 12, backgroundColor: '#222a3a', borderWidth: 1 },
+  signalDot: { width: 16, height: 16, borderRadius: 999, borderWidth: 2 },
+  trafficInfo: { flex: 1 },
+  trafficLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  trafficLabel: { fontSize: 16, fontWeight: '800' },
+  trafficText: { fontSize: 14.5, fontWeight: '600', marginTop: 3 },
+  container: { padding: 18, paddingTop: 4, gap: 14 },
+  controlsRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 2 },
+  playButtonInner: { flex: 1, gap: 8 },
+  playLabel: { fontWeight: '800', fontSize: 15 },
+  dotsRow: { flexDirection: 'row', gap: 5 },
+  dot: { height: 6, borderRadius: 999 },
+});

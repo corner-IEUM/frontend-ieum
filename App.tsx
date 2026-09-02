@@ -11,7 +11,7 @@ import { WalkScreen } from './src/screens/Walk';
 import { NavigateScreen } from './src/screens/Navigate';
 import { SettingsScreen } from './src/screens/Settings';
 import { AccountScreen } from './src/screens/Account';
-import { CameraGateScreen, CameraTarget } from './src/screens/CameraGate';
+import { CameraGateScreen } from './src/screens/CameraGate';
 
 type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera';
 const TABS: { id: ScreenId; icon: IconName; label: string }[] = [
@@ -103,7 +103,6 @@ function IeumApp() {
   const [playing, setPlaying] = useState(true);
   const [ambient, setAmbient] = useState<Level | 'idle'>('idle');
   const [tweaksOpen, setTweaksOpen] = useState(false);
-  const [cameraTarget, setCameraTarget] = useState<CameraTarget>('walk');
 
   React.useEffect(() => { setPlaying(tw.autoGuide); }, [tw.autoGuide]);
 
@@ -113,7 +112,7 @@ function IeumApp() {
 
   const go = (s: string) => {
     setAmbient('idle');
-    if (s === 'walk' || s === 'navigate') { setCameraTarget(s); setScreen('camera'); return; }
+    if (s === 'walk') { setScreen('camera'); return; }
     setScreen(s as ScreenId);
   };
   const goHome = () => go('home');
@@ -124,7 +123,7 @@ function IeumApp() {
     navigate: <NavigateScreen playing={playing} big={tw.captionBig} />,
     settings: <SettingsScreen onBack={goHome} />,
     account: <AccountScreen onBack={goHome} />,
-    camera: <CameraGateScreen target={cameraTarget} onScanned={() => setScreen(cameraTarget)} onCancel={goHome} />,
+    camera: <CameraGateScreen target="walk" onScanned={() => setScreen('walk')} onCancel={goHome} />,
   };
 
   return (

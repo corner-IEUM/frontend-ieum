@@ -1,6 +1,6 @@
 // screens/Navigate.tsx — 길찾기 (통합 모드): 도보 → 버스 → 도보, 주변 설명 + 대중교통 탑승/하차 안내가 자동으로 끼어든다.
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Animated, Easing, Vibration } from 'react-native';
+import { View, Text, TouchableOpacity, Animated, Easing, Vibration, StyleSheet } from 'react-native';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { Icon, IconName } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
@@ -52,16 +52,18 @@ function LegBar({ currentLeg }: { currentLeg: string }) {
   const t = useTheme();
   const curIdx = LEGS.findIndex((l) => l.id === currentLeg);
   return (
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+    <View style={styles.legBarRow}>
       {LEGS.map((leg, k) => {
         const on = leg.id === currentLeg;
         const done = k < curIdx;
         return (
           <React.Fragment key={leg.id}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999,
-              backgroundColor: on ? t.primary : t.surface, borderWidth: t.borderW, borderColor: on ? t.primary : t.border, opacity: done ? 0.5 : 1 }}>
+            <View style={[
+              styles.legChip,
+              { backgroundColor: on ? t.primary : t.surface, borderWidth: t.borderW, borderColor: on ? t.primary : t.border, opacity: done ? 0.5 : 1 },
+            ]}>
               <Icon name={leg.icon} size={16} color={on ? t.onPrimary : t.textDim} sw={2.2} />
-              <Text style={{ fontSize: 12.5, fontWeight: '800', color: on ? t.onPrimary : t.textDim }}>{leg.label}</Text>
+              <Text style={[styles.legChipText, { color: on ? t.onPrimary : t.textDim }]}>{leg.label}</Text>
             </View>
             {k < LEGS.length - 1 ? <Icon name="chevron" size={14} color={t.textFaint} sw={2.6} /> : null}
           </React.Fragment>
@@ -84,7 +86,7 @@ function MiniMap({ progress }: { progress: number }) {
     target -= segLen[i];
   }
   return (
-    <View style={{ height: 132, borderRadius: t.radius, overflow: 'hidden', borderWidth: t.borderW, borderColor: t.border, backgroundColor: isC ? '#ffffff' : '#e9eef8' }}>
+    <View style={[styles.miniMap, { borderRadius: t.radius, borderWidth: t.borderW, borderColor: t.border, backgroundColor: isC ? '#ffffff' : '#e9eef8' }]}>
       <Svg width="100%" height="100%" viewBox="0 0 360 140" preserveAspectRatio="none">
         {[40, 90].map((y) => <Line key={y} x1={0} y1={y} x2={360} y2={y} stroke={t.border} strokeWidth={1} opacity={0.6} />)}
         {[120, 240].map((x) => <Line key={x} x1={x} y1={0} x2={x} y2={140} stroke={t.border} strokeWidth={1} opacity={0.6} />)}
@@ -94,7 +96,7 @@ function MiniMap({ progress }: { progress: number }) {
         <Circle cx={320} cy={30} r={7} fill={t.status.safe.fg} />
         <Circle cx={mx} cy={my} r={9} fill={t.primary} stroke={t.surface} strokeWidth={3} />
       </Svg>
-      <Text style={{ position: 'absolute', bottom: 8, right: 10, fontSize: 11, color: t.textFaint }}>실시간 경로</Text>
+      <Text style={[styles.miniMapLabel, { color: t.textFaint }]}>실시간 경로</Text>
     </View>
   );
 }
@@ -107,7 +109,10 @@ function Ripple({ color, delay }: { color: string; delay: number }) {
     loop.start();
     return () => loop.stop();
   }, []);
-  return <Animated.View style={{ position: 'absolute', width: 84, height: 84, borderRadius: 999, borderWidth: 2, borderColor: color, opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.8, 0] }), transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.5] }) }] }} />;
+  return <Animated.View style={[
+    styles.ripple,
+    { borderColor: color, opacity: v.interpolate({ inputRange: [0, 1], outputRange: [0.8, 0] }), transform: [{ scale: v.interpolate({ inputRange: [0, 1], outputRange: [0.5, 1.5] }) }] },
+  ]} />;
 }
 
 function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boolean; t: Theme }) {
@@ -116,14 +121,14 @@ function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boole
 
   if (step.kind === 'busNumber') {
     return (
-      <Card pad={0} style={{ overflow: 'hidden' }}>
-        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 18, padding: 22, backgroundColor: isC ? t.surface : withAlpha(c, 0.14) }}>
-          <View style={{ minWidth: 96, height: 70, borderRadius: t.radiusSm, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b1a3a', borderWidth: 2, borderColor: c, paddingHorizontal: 14 }}>
-            <Text style={{ fontSize: (step.num || '').length > 3 ? 24 : 36, fontWeight: '900', color: '#ffd23f', letterSpacing: -1 }}>{step.num}</Text>
+      <Card pad={0} style={styles.busNumberCard}>
+        <View style={[styles.busNumberRow, { backgroundColor: isC ? t.surface : withAlpha(c, 0.14) }]}>
+          <View style={[styles.busNumberBadge, { borderRadius: t.radiusSm, borderColor: c }]}>
+            <Text style={[styles.busNumberText, { fontSize: (step.num || '').length > 3 ? 24 : 36 }]}>{step.num}</Text>
           </View>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.5, color: t.textDim }}>버스 번호 인식</Text>
-            <Text style={{ fontSize: 20, fontWeight: '800', color: t.text, marginTop: 3 }}>간선버스 · 정상 운행</Text>
+          <View style={styles.flex1}>
+            <Text style={[styles.busNumberCaption, { color: t.textDim }]}>버스 번호 인식</Text>
+            <Text style={[styles.busNumberTitle, { color: t.text }]}>간선버스 · 정상 운행</Text>
           </View>
         </View>
       </Card>
@@ -131,27 +136,27 @@ function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boole
   }
   if (step.kind === 'signal') {
     return (
-      <Card style={{ alignItems: 'center', gap: 14, padding: 26 }}>
-        <View style={{ width: 84, height: 84, alignItems: 'center', justifyContent: 'center' }}>
+      <Card style={styles.signalCard}>
+        <View style={styles.signalRippleWrap}>
           {sending ? [0, 1, 2].map((k) => <Ripple key={k} color={c} delay={k * 400} />) : null}
-          <View style={{ width: 64, height: 64, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: isC ? t.surface : withAlpha(c, 0.18), borderWidth: 2, borderColor: c }}>
+          <View style={[styles.signalIconCircle, { backgroundColor: isC ? t.surface : withAlpha(c, 0.18), borderColor: c }]}>
             <Icon name="bus" size={34} color={c} sw={2.1} />
           </View>
         </View>
-        <Text style={{ fontSize: 16, fontWeight: '800', color: t.primary }}>기사님께 탑승 신호 전송 중…</Text>
+        <Text style={[styles.signalText, { color: t.primary }]}>기사님께 탑승 신호 전송 중…</Text>
       </Card>
     );
   }
   if (step.kind === 'ride') {
     return (
-      <Card style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: 22 }}>
-        <View style={{ width: 60, height: 60, borderRadius: t.radiusSm, alignItems: 'center', justifyContent: 'center', backgroundColor: isC ? t.surface : withAlpha(c, 0.16), borderWidth: 2, borderColor: c }}>
+      <Card style={styles.rideCard}>
+        <View style={[styles.rideIconCircle, { borderRadius: t.radiusSm, backgroundColor: isC ? t.surface : withAlpha(c, 0.16), borderColor: c }]}>
           <Icon name="bus" size={32} color={c} sw={2.1} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.5, color: t.textDim }}>승차 중 · 하차까지</Text>
-          <Text style={{ fontSize: 26, fontWeight: '900', color: t.text, letterSpacing: -0.6, marginTop: 2 }}>
-            {step.stops}<Text style={{ fontSize: 17, fontWeight: '800', color: t.textDim }}> 정거장 남음</Text>
+        <View style={styles.flex1}>
+          <Text style={[styles.rideCaption, { color: t.textDim }]}>승차 중 · 하차까지</Text>
+          <Text style={[styles.rideStopsText, { color: t.text }]}>
+            {step.stops}<Text style={[styles.rideStopsSuffix, { color: t.textDim }]}> 정거장 남음</Text>
           </Text>
         </View>
       </Card>
@@ -166,13 +171,13 @@ function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boole
   const m = map[step.kind];
   const sc = t.status[m.cl];
   return (
-    <Card tone={withAlpha(sc.fg, 0.45)} style={{ flexDirection: 'row', alignItems: 'center', gap: 16, padding: 22 }}>
-      <View style={{ width: 64, height: 64, borderRadius: t.radiusSm, alignItems: 'center', justifyContent: 'center', backgroundColor: isC ? t.surface : withAlpha(sc.fg, 0.16), borderWidth: 2, borderColor: sc.fg }}>
+    <Card tone={withAlpha(sc.fg, 0.45)} style={styles.rideCard}>
+      <View style={[styles.alertIconCircle, { borderRadius: t.radiusSm, backgroundColor: isC ? t.surface : withAlpha(sc.fg, 0.16), borderColor: sc.fg }]}>
         <Icon name={m.ic} size={36} color={sc.fg} sw={2} />
       </View>
       <View>
-        <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.4, color: sc.fg }}>{m.cap}</Text>
-        <Text style={{ fontSize: 19, fontWeight: '800', color: t.text, marginTop: 3 }}>{m.val}</Text>
+        <Text style={[styles.alertCaption, { color: sc.fg }]}>{m.cap}</Text>
+        <Text style={[styles.alertValue, { color: t.text }]}>{m.val}</Text>
       </View>
     </Card>
   );
@@ -183,33 +188,33 @@ function AroundPanel({ items }: { items: AroundItem[] }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
   return (
-    <Card pad={16} style={{ gap: 12 }}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+    <Card pad={16} style={styles.aroundCard}>
+      <View style={styles.aroundHeaderRow}>
         <Icon name="compass" size={18} color={t.primary} sw={2.2} />
-        <Text style={{ fontSize: 14, fontWeight: '800', letterSpacing: 0.4, color: t.text }}>주변 안내</Text>
-        <View style={{ flex: 1 }} />
-        <Text style={{ fontSize: 12, fontWeight: '600', color: t.textFaint }}>걷는 동안 자동 설명</Text>
+        <Text style={[styles.aroundHeaderTitle, { color: t.text }]}>주변 안내</Text>
+        <View style={styles.flex1} />
+        <Text style={[styles.aroundHeaderHint, { color: t.textFaint }]}>걷는 동안 자동 설명</Text>
       </View>
-      <View style={{ gap: 8 }}>
+      <View style={styles.aroundList}>
         {items.map((it, k) => {
           const cc = CAT_COLOR(t, it.cat);
           return (
-            <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 13 }}>
-              <View style={{ width: 40, height: 40, borderRadius: isC ? 7 : 11, alignItems: 'center', justifyContent: 'center', backgroundColor: isC ? t.surface : withAlpha(cc, 0.16), borderWidth: 1.5, borderColor: cc }}>
+            <View key={k} style={styles.aroundRow}>
+              <View style={[styles.aroundIconCircle, { borderRadius: isC ? 7 : 11, backgroundColor: isC ? t.surface : withAlpha(cc, 0.16), borderColor: cc }]}>
                 <Icon name={it.icon} size={22} color={cc} sw={2} />
               </View>
-              <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 16, fontWeight: '800', color: t.text, letterSpacing: -0.4 }}>{it.name}</Text>
-                <Text style={{ fontSize: 13, fontWeight: '600', color: t.textDim, marginTop: 1 }}>{it.bearing} · {it.dist}</Text>
+              <View style={styles.aroundItemInfo}>
+                <Text style={[styles.aroundItemName, { color: t.text }]}>{it.name}</Text>
+                <Text style={[styles.aroundItemMeta, { color: t.textDim }]}>{it.bearing} · {it.dist}</Text>
               </View>
               {k === 0 ? (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+                <View style={styles.aroundSpeakingRow}>
                   <Icon name="speaker" size={15} color={t.primary} sw={2.2} />
-                  <Text style={{ fontSize: 12, fontWeight: '800', color: t.primary }}>안내 중</Text>
+                  <Text style={[styles.aroundSpeakingText, { color: t.primary }]}>안내 중</Text>
                 </View>
               ) : null}
-              <View style={{ paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, borderWidth: 1, borderColor: withAlpha(cc, 0.45) }}>
-                <Text style={{ fontSize: 11.5, fontWeight: '800', color: cc }}>{it.cat}</Text>
+              <View style={[styles.aroundCatBadge, { borderColor: withAlpha(cc, 0.45) }]}>
+                <Text style={[styles.aroundCatText, { color: cc }]}>{it.cat}</Text>
               </View>
             </View>
           );
@@ -224,12 +229,12 @@ function ArrivePanel() {
   const isC = t.id === 'contrast';
   const s = t.status.safe;
   return (
-    <Card tone={withAlpha(s.fg, 0.45)} style={{ alignItems: 'center', gap: 12, padding: 28 }}>
-      <View style={{ width: 72, height: 72, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: isC ? t.surface : withAlpha(s.fg, 0.16), borderWidth: 2.5, borderColor: s.fg }}>
+    <Card tone={withAlpha(s.fg, 0.45)} style={styles.arriveCard}>
+      <View style={[styles.arriveIconCircle, { backgroundColor: isC ? t.surface : withAlpha(s.fg, 0.16), borderColor: s.fg }]}>
         <Icon name="check" size={40} color={s.fg} sw={2.6} />
       </View>
-      <Text style={{ fontSize: 21, fontWeight: '900', color: t.text, letterSpacing: -0.6 }}>도착했습니다</Text>
-      <Text style={{ fontSize: 15, fontWeight: '600', color: t.textDim }}>성수역 2번 출구</Text>
+      <Text style={[styles.arriveTitle, { color: t.text }]}>도착했습니다</Text>
+      <Text style={[styles.arriveSub, { color: t.textDim }]}>성수역 2번 출구</Text>
     </Card>
   );
 }
@@ -263,16 +268,16 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
   }));
 
   return (
-    <View style={{ padding: 18, paddingTop: 4, gap: 14 }}>
-      <ModeHeader title="길찾기" icon="pin" onBack={onBack} right={<Text style={{ fontSize: 14, fontWeight: '800', color: t.textDim }}>약 14분 · 1.2km</Text>} />
+    <View style={styles.container}>
+      <ModeHeader title="길찾기" icon="pin" onBack={onBack} right={<Text style={[styles.etaText, { color: t.textDim }]}>약 14분 · 1.2km</Text>} />
 
-      <Card pad={16} tone={withAlpha(t.primary, 0.4)} style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-        <View style={{ width: 46, height: 46, borderRadius: t.id === 'contrast' ? 8 : 12, alignItems: 'center', justifyContent: 'center', backgroundColor: t.id === 'contrast' ? t.surface : withAlpha(t.primary, 0.16), borderWidth: t.id === 'contrast' ? 2 : 0, borderColor: t.primary }}>
+      <Card pad={16} tone={withAlpha(t.primary, 0.4)} style={styles.destCard}>
+        <View style={[styles.destIconCircle, { borderRadius: t.id === 'contrast' ? 8 : 12, backgroundColor: t.id === 'contrast' ? t.surface : withAlpha(t.primary, 0.16), borderWidth: t.id === 'contrast' ? 2 : 0, borderColor: t.primary }]}>
           <Icon name="pin" size={26} color={t.primary} sw={2.1} />
         </View>
-        <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 12.5, fontWeight: '800', letterSpacing: 0.5, color: t.textDim }}>목적지</Text>
-          <Text style={{ fontSize: 19, fontWeight: '800', color: t.text, marginTop: 1 }}>성수역 2번 출구</Text>
+        <View style={styles.flex1}>
+          <Text style={[styles.destLabel, { color: t.textDim }]}>목적지</Text>
+          <Text style={[styles.destName, { color: t.text }]}>성수역 2번 출구</Text>
         </View>
       </Card>
 
@@ -289,24 +294,82 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
 
       <CaptionBar level={off ? 'danger' : step.level} text={off ? '경로를 벗어났습니다' : step.text} sub={off ? '오던 길로 5m 돌아가세요 · 강한 진동' : step.sub} speaking={playing} big={big} />
 
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+      <View style={styles.navControlsRow}>
         <TouchableOpacity onPress={() => setI((v) => Math.max(0, v - 1))} disabled={i === 0} style={[ctrlStyle(t), { opacity: i === 0 ? 0.4 : 1 }]}>
           <Icon name="chevronL" size={22} color={t.text} sw={2.4} />
         </TouchableOpacity>
         <TouchableOpacity onPress={() => setI((v) => Math.min(JOURNEY.length - 1, v + 1))} disabled={atEnd}
-          style={[ctrlStyle(t), { flex: 1, gap: 8, opacity: atEnd ? 0.5 : 1, backgroundColor: atEnd ? t.surface : t.primary, borderColor: atEnd ? t.border : t.primary }]}>
-          <Text style={{ fontWeight: '800', fontSize: 16, color: atEnd ? t.textDim : t.onPrimary }}>{atEnd ? '안내 완료' : '다음 안내'}</Text>
+          style={[ctrlStyle(t), styles.nextButtonInner, { opacity: atEnd ? 0.5 : 1, backgroundColor: atEnd ? t.surface : t.primary, borderColor: atEnd ? t.border : t.primary }]}>
+          <Text style={[styles.nextButtonText, { color: atEnd ? t.textDim : t.onPrimary }]}>{atEnd ? '안내 완료' : '다음 안내'}</Text>
           {!atEnd ? <Icon name="chevron" size={20} color={t.onPrimary} sw={2.4} /> : null}
         </TouchableOpacity>
-        <Text style={{ fontSize: 13, fontWeight: '700', color: t.textFaint, minWidth: 42, textAlign: 'right' }}>{i + 1}/{JOURNEY.length}</Text>
+        <Text style={[styles.counterText, { color: t.textFaint }]}>{i + 1}/{JOURNEY.length}</Text>
       </View>
 
-      <TouchableOpacity onPress={deviate} style={[ctrlStyle(t), { gap: 8, borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
+      <TouchableOpacity onPress={deviate} style={[ctrlStyle(t), styles.deviateButtonInner, { borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
         <Icon name="alert" size={18} color={t.status.danger.fg} sw={2.2} />
-        <Text style={{ fontWeight: '800', fontSize: 14, color: t.status.danger.fg }}>경로 이탈 경고 시연</Text>
+        <Text style={[styles.deviateText, { color: t.status.danger.fg }]}>경로 이탈 경고 시연</Text>
       </TouchableOpacity>
 
       <HapticFlash show={danger} />
     </View>
   );
 }
+
+const styles = StyleSheet.create({
+  legBarRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  legChip: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
+  legChipText: { fontSize: 12.5, fontWeight: '800' },
+  miniMap: { height: 132, overflow: 'hidden' },
+  miniMapLabel: { position: 'absolute', bottom: 8, right: 10, fontSize: 11 },
+  ripple: { position: 'absolute', width: 84, height: 84, borderRadius: 999, borderWidth: 2 },
+  flex1: { flex: 1 },
+  busNumberCard: { overflow: 'hidden' },
+  busNumberRow: { flexDirection: 'row', alignItems: 'center', gap: 18, padding: 22 },
+  busNumberBadge: { minWidth: 96, height: 70, alignItems: 'center', justifyContent: 'center', backgroundColor: '#0b1a3a', borderWidth: 2, paddingHorizontal: 14 },
+  busNumberText: { fontWeight: '900', color: '#ffd23f', letterSpacing: -1 },
+  busNumberCaption: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  busNumberTitle: { fontSize: 20, fontWeight: '800', marginTop: 3 },
+  signalCard: { alignItems: 'center', gap: 14, padding: 26 },
+  signalRippleWrap: { width: 84, height: 84, alignItems: 'center', justifyContent: 'center' },
+  signalIconCircle: { width: 64, height: 64, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+  signalText: { fontSize: 16, fontWeight: '800' },
+  rideCard: { flexDirection: 'row', alignItems: 'center', gap: 16, padding: 22 },
+  rideIconCircle: { width: 60, height: 60, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+  rideCaption: { fontSize: 13, fontWeight: '800', letterSpacing: 0.5 },
+  rideStopsText: { fontSize: 26, fontWeight: '900', letterSpacing: -0.6, marginTop: 2 },
+  rideStopsSuffix: { fontSize: 17, fontWeight: '800' },
+  alertIconCircle: { width: 64, height: 64, alignItems: 'center', justifyContent: 'center', borderWidth: 2 },
+  alertCaption: { fontSize: 13, fontWeight: '800', letterSpacing: 0.4 },
+  alertValue: { fontSize: 19, fontWeight: '800', marginTop: 3 },
+  aroundCard: { gap: 12 },
+  aroundHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  aroundHeaderTitle: { fontSize: 14, fontWeight: '800', letterSpacing: 0.4 },
+  aroundHeaderHint: { fontSize: 12, fontWeight: '600' },
+  aroundList: { gap: 8 },
+  aroundRow: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  aroundIconCircle: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center', borderWidth: 1.5 },
+  aroundItemInfo: { flex: 1 },
+  aroundItemName: { fontSize: 16, fontWeight: '800', letterSpacing: -0.4 },
+  aroundItemMeta: { fontSize: 13, fontWeight: '600', marginTop: 1 },
+  aroundSpeakingRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  aroundSpeakingText: { fontSize: 12, fontWeight: '800' },
+  aroundCatBadge: { paddingHorizontal: 9, paddingVertical: 3, borderRadius: 999, borderWidth: 1 },
+  aroundCatText: { fontSize: 11.5, fontWeight: '800' },
+  arriveCard: { alignItems: 'center', gap: 12, padding: 28 },
+  arriveIconCircle: { width: 72, height: 72, borderRadius: 999, alignItems: 'center', justifyContent: 'center', borderWidth: 2.5 },
+  arriveTitle: { fontSize: 21, fontWeight: '900', letterSpacing: -0.6 },
+  arriveSub: { fontSize: 15, fontWeight: '600' },
+  container: { padding: 18, paddingTop: 4, gap: 14 },
+  etaText: { fontSize: 14, fontWeight: '800' },
+  destCard: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  destIconCircle: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
+  destLabel: { fontSize: 12.5, fontWeight: '800', letterSpacing: 0.5 },
+  destName: { fontSize: 19, fontWeight: '800', marginTop: 1 },
+  navControlsRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  nextButtonInner: { flex: 1, gap: 8 },
+  nextButtonText: { fontWeight: '800', fontSize: 16 },
+  counterText: { fontSize: 13, fontWeight: '700', minWidth: 42, textAlign: 'right' },
+  deviateButtonInner: { gap: 8 },
+  deviateText: { fontWeight: '800', fontSize: 14 },
+});

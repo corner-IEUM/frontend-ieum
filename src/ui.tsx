@@ -1,16 +1,16 @@
-// ui.tsx — shared visual components (RN) — light/white edition
+// ui.tsx — 공통 UI 컴포넌트 (RN) — 라이트/화이트 버전
 import React, { useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, Animated, ViewStyle } from 'react-native';
 import { Icon, IconName } from './Icon';
 import { useTheme } from './theme-context';
 import { Level, withAlpha, STATUS_LABEL, Theme } from './theme';
 
-// ───────── shadow helper (soft, cool-toned — for white surfaces) ─────────
+// ───────── 그림자 효과 헬퍼 (흰색 배경용 부드러운 그림자) ─────────
 export function shadow(color = 'rgba(22,42,82,0.16)', radius = 14, opacity = 0.18, elev = 4): ViewStyle {
   return { shadowColor: color, shadowOffset: { width: 0, height: 6 }, shadowRadius: radius, shadowOpacity: opacity, elevation: elev };
 }
 
-// ───────── animated waveform bar ─────────
+// ───────── 애니메이션 파형 막대 ─────────
 function WaveBar({ active, color, delay }: { active: boolean; color: string; delay: number }) {
   const v = useRef(new Animated.Value(0.25)).current;
   useEffect(() => {
@@ -33,7 +33,7 @@ export function Waveform({ active, color }: { active: boolean; color: string }) 
   );
 }
 
-// ───────── blinking dot (LIVE) ─────────
+// ───────── 깜빡이는 점 (LIVE 표시) ─────────
 export function Blink({ children }: { children: React.ReactNode }) {
   const v = useRef(new Animated.Value(1)).current;
   useEffect(() => {
@@ -47,7 +47,7 @@ export function Blink({ children }: { children: React.ReactNode }) {
   return <Animated.View style={{ opacity: v }}>{children}</Animated.View>;
 }
 
-// ───────── status pill ─────────
+// ───────── 상태 표시 알약(Pill) ─────────
 export function StatusPill({ level, large }: { level: Level; large?: boolean }) {
   const t = useTheme();
   const sc = t.status[level];
@@ -65,7 +65,7 @@ export function StatusPill({ level, large }: { level: Level; large?: boolean }) 
   );
 }
 
-// ───────── live caption bar (TTS subtitle) ─────────
+// ───────── 실시간 자막 바 (TTS 자막) ─────────
 export function CaptionBar({ level, text, sub, speaking, big }: { level: Level | 'idle'; text: string; sub?: string; speaking?: boolean; big?: boolean }) {
   const t = useTheme();
   const sc = level === 'idle' ? null : t.status[level];
@@ -91,7 +91,7 @@ export function CaptionBar({ level, text, sub, speaking, big }: { level: Level |
   );
 }
 
-// ───────── card ─────────
+// ───────── 카드 ─────────
 export function Card({ children, style, pad = 18, tone }: { children: React.ReactNode; style?: ViewStyle; pad?: number; tone?: string }) {
   const t = useTheme();
   return (
@@ -101,7 +101,7 @@ export function Card({ children, style, pad = 18, tone }: { children: React.Reac
   );
 }
 
-// ───────── section title ─────────
+// ───────── 섹션 제목 ─────────
 export function SectionTitle({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   const t = useTheme();
   return (
@@ -112,7 +112,7 @@ export function SectionTitle({ children, right }: { children: React.ReactNode; r
   );
 }
 
-// ───────── mode button ─────────
+// ───────── 모드 선택 버튼 ─────────
 export function ModeButton({ icon, title, desc, onPress, active }: { icon: IconName; title: string; desc?: string; onPress?: () => void; active?: boolean }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
@@ -139,7 +139,7 @@ export function ModeButton({ icon, title, desc, onPress, active }: { icon: IconN
   );
 }
 
-// ───────── mode header (optional back chevron for non-tab screens) ─────────
+// ───────── 모드 헤더 (뒤로가기 버튼이 있는 화면용) ─────────
 export function ModeHeader({ title, icon, right, onBack }: { title: string; icon: IconName; right?: React.ReactNode; onBack?: () => void }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
@@ -163,7 +163,7 @@ export function ModeHeader({ title, icon, right, onBack }: { title: string; icon
   );
 }
 
-// ───────── segmented control ─────────
+// ───────── 세그먼트 컨트롤 (탭 전환 버튼) ─────────
 export function Segmented({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { v: string; l: string }[] }) {
   const t = useTheme();
   return (
@@ -180,7 +180,7 @@ export function Segmented({ value, onChange, options }: { value: string; onChang
   );
 }
 
-// ───────── toggle switch row ─────────
+// ───────── 토글 스위치 행 ─────────
 export function Toggle({ label, desc, value, onChange }: { label: string; desc?: string; value: boolean; onChange: (b: boolean) => void }) {
   const t = useTheme();
   return (
@@ -196,8 +196,8 @@ export function Toggle({ label, desc, value, onChange }: { label: string; desc?:
   );
 }
 
-// ───────── labeled input field (account screen) ─────────
-export function Field({ label, icon, secure, keyboardType, placeholder }: { label: string; icon: IconName; secure?: boolean; keyboardType?: 'default' | 'email-address'; placeholder?: string }) {
+// ───────── 라벨 붙은 입력 필드 (계정 화면용) ─────────
+export function Field({ label, icon, secure, keyboardType, placeholder, value, onChangeText, autoCapitalize }: { label: string; icon: IconName; secure?: boolean; keyboardType?: 'default' | 'email-address'; placeholder?: string; value?: string; onChangeText?: (text: string) => void; autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters' }) {
   const t = useTheme();
   return (
     <View style={{ gap: 7 }}>
@@ -209,6 +209,9 @@ export function Field({ label, icon, secure, keyboardType, placeholder }: { labe
           placeholderTextColor={t.textFaint}
           secureTextEntry={secure}
           keyboardType={keyboardType}
+          value={value}
+          onChangeText={onChangeText}
+          autoCapitalize={autoCapitalize}
           style={{ flex: 1, fontSize: 16, fontWeight: '600', color: t.text, padding: 0 }}
         />
       </View>
@@ -216,7 +219,7 @@ export function Field({ label, icon, secure, keyboardType, placeholder }: { labe
   );
 }
 
-// ───────── small control button ─────────
+// ───────── 작은 컨트롤 버튼 스타일 ─────────
 export function ctrlStyle(t: Theme): ViewStyle {
   return { minWidth: 52, height: 52, paddingHorizontal: 16, borderRadius: t.radiusSm, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface, borderWidth: t.borderW, borderColor: t.border };
 }
