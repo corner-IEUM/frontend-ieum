@@ -1,17 +1,39 @@
 // screens/Account.tsx — 계정 (로그인 / 회원가입 / 프로필)
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeHeader, Card, Segmented, Field } from '../ui';
-import { login, signup, clearToken } from '../api'; // 로그인/회원가입/토큰삭제 함수 가져오기
+import { login, signup, clearToken, getToken, getMyInfo } from '../api'; // 로그인/회원가입/토큰삭제/토큰조회/내정보조회 함수 가져오기
 
 export function AccountScreen({ onBack }: { onBack?: () => void }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
   const [authed, setAuthed] = useState(false); // 로그인 상태 여부
   const [mode, setMode] = useState('login'); // 'login' 또는 'signup'
+  // 저장된 토큰 확인 중 여부 — 확인이 끝나기 전에는 로그인 화면이 보이면 안 됨
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  // 앱(화면) 시작 시 저장된 토큰이 있는지 확인해서 로그인 상태를 복원
+  useEffect(() => {
+    (async () => {
+      const token = await getToken();
+      if (token) {
+        try {
+          // 토큰이 있으면 내 정보를 조회해서 nickname/email까지 채운 뒤 로그인 상태로 진입
+          const me = await getMyInfo();
+          setNickname(me.nickname);
+          setEmail(me.email);
+          setAuthed(true);
+        } catch (e) {
+          // 토큰 만료 등으로 조회 실패 시 로그인 안 된 상태로 되돌림
+          setAuthed(false);
+        }
+      }
+      setCheckingAuth(false); // 확인 완료
+    })();
+  }, []);
 
   // 입력 필드 값 저장용 state
   const [nickname, setNickname] = useState('');
@@ -54,6 +76,11 @@ export function AccountScreen({ onBack }: { onBack?: () => void }) {
     setPassword('');
     setNickname('');
   };
+
+  // ── 토큰 확인 중일 때는 로그인 화면이 깜빡 보이지 않도록 아무것도 렌더링하지 않음 ──
+  if (checkingAuth) {
+    return null;
+  }
 
   // ── 로그인된 상태일 때 보여주는 화면 (프로필 화면) ──
   if (authed) {

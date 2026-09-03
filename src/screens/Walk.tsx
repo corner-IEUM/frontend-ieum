@@ -7,6 +7,7 @@ import { withAlpha, Level } from '../theme';
 import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
 import { useLocationTracking } from '../hooks/useLocationTracking';
+import { completeWalk } from '../api';
 
 interface Scene { level: Level; text: string; sub: string; objects: SceneObj[]; haptic?: boolean; traffic?: 'red' | 'green'; }
 
@@ -58,8 +59,16 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
   const setAmbient = useAmbient();
   const [i, setI] = useState(0);
   const [haptic, setHaptic] = useState(false);
+  const [walkStartTime, setWalkStartTime] = useState<number | null>(null); // 보행 시작 시각
   const scene = WALK_SCENES[i];
-  const { location, errorMsg } = useLocationTracking(playing);
+  const { location, errorMsg, getRoute, getTotalDistance } = useLocationTracking(playing);
+
+  // 보행이 처음 시작되는 시점의 시각을 기록
+  useEffect(() => {
+    if (playing && walkStartTime === null) {
+      setWalkStartTime(Date.now());
+    }
+  }, [playing, walkStartTime]);
 
   useEffect(() => {
     if (!playing) return;
@@ -79,6 +88,22 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
   }, [i]);
 
   const step = (d: number) => { setPlaying(() => false); setI((v) => (v + d + WALK_SCENES.length) % WALK_SCENES.length); };
+
+  // 보행 종료: 이동 기록을 서버에 저장
+  const handleEndWalk = async () => {
+    setPlaying(() => false);
+
+    const routeData = getRoute();
+    const totalDistance = getTotalDistance();
+    const totalTime = walkStartTime ? Math.floor((Date.now() - walkStartTime) / 1000) : 0; // 초 단위
+    const obstacleCount = 0; // TODO: AI 연동 후 실제 장애물 감지 개수로 대체 예정
+
+    try {
+      await completeWalk(routeData, totalDistance, totalTime, obstacleCount);
+    } catch (e) {
+      console.error('보행 기록 저장 실패:', e);
+    }
+  };
 
   return (
     <View style={styles.container}>
@@ -103,6 +128,13 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
         </TouchableOpacity>
         <TouchableOpacity onPress={() => step(1)} style={ctrlStyle(t)}><Icon name="chevron" size={22} color={t.text} sw={2.4} /></TouchableOpacity>
       </View>
+
+      <TouchableOpacity
+        onPress={handleEndWalk}
+        style={[ctrlStyle(t), styles.endButton, { borderColor: t.status.danger.fg }]}
+      >
+        <Text style={[styles.endButtonLabel, { color: t.status.danger.fg }]}>보행 종료</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -121,4 +153,6 @@ const styles = StyleSheet.create({
   playLabel: { fontWeight: '800', fontSize: 15 },
   dotsRow: { flexDirection: 'row', gap: 5 },
   dot: { height: 6, borderRadius: 999 },
+  endButton: { width: '100%', marginTop: 2 },
+  endButtonLabel: { fontWeight: '800', fontSize: 15 },
 });

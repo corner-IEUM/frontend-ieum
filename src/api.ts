@@ -50,3 +50,18 @@ export async function signup(nickname: string, email: string, password: string) 
   if (!res.ok) throw new Error('회원가입에 실패했습니다');
   return true;
 }
+// 내 정보 조회 API 요청 함수 (JWT 인증 필요)
+export async function getMyInfo() {
+  const res = await authFetch('/api/users/me');
+  if (!res.ok) throw new Error('내 정보 조회에 실패했습니다');
+  return res.json(); // { id, email, nickname }
+}
+// 보행 종료 시 보행 기록 저장 API 요청 함수 (JWT 인증 필요)
+export async function completeWalk(routeData: unknown, totalDistance: number, totalTime: number, obstacleCount: number) {
+  const res = await authFetch('/api/walk/complete', {
+    method: 'POST',
+    body: JSON.stringify({ routeData, totalDistance, totalTime, obstacleCount }),
+  });
+  if (!res.ok) throw new Error('보행 기록 저장에 실패했습니다');
+  return res.json();
+}
