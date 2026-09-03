@@ -91,6 +91,23 @@ export function CaptionBar({ level, text, sub, speaking, big }: { level: Level |
   );
 }
 
+// ───────── 실시간 위험요소 안내 배너 (WebSocket으로 밀려오는 guidance 메시지) ─────────
+export function GuidanceBanner({ guidance }: { guidance: { kind: string; priority: number; message: string } | null }) {
+  const t = useTheme();
+  if (!guidance) return null;
+  const level: Level = guidance.priority <= 1 ? 'danger' : guidance.priority === 2 ? 'caution' : 'safe';
+  const sc = t.status[level];
+  return (
+    <View style={{
+      flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14, borderRadius: t.radiusSm,
+      backgroundColor: withAlpha(sc.fg, 0.14), borderWidth: t.borderW, borderColor: sc.fg,
+    }}>
+      <Icon name="alert" size={18} color={sc.fg} sw={2.2} />
+      <Text style={{ flex: 1, fontSize: 14.5, fontWeight: '800', color: sc.fg }}>{guidance.message}</Text>
+    </View>
+  );
+}
+
 // ───────── 카드 ─────────
 export function Card({ children, style, pad = 18, tone }: { children: React.ReactNode; style?: ViewStyle; pad?: number; tone?: string }) {
   const t = useTheme();

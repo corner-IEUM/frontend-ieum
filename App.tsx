@@ -12,8 +12,13 @@ import { NavigateScreen } from './src/screens/Navigate';
 import { SettingsScreen } from './src/screens/Settings';
 import { AccountScreen } from './src/screens/Account';
 import { CameraGateScreen } from './src/screens/CameraGate';
+import { PlaceSearchScreen } from './src/screens/PlaceSearch';
+import { RouteCandidatesScreen } from './src/screens/RouteCandidates';
+import { Place, RouteCandidate, RouteResponse, searchRouteCandidates, createRoute, checkNearbyHazards, completeNavigation } from './src/api';
+import { useLocationTracking } from './src/hooks/useLocationTracking';
+import { useGuidanceSocket } from './src/hooks/useGuidanceSocket';
 
-type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera';
+type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates';
 const TABS: { id: ScreenId; icon: IconName; label: string }[] = [
   { id: 'home', icon: 'home', label: '홈' },
   { id: 'walk', icon: 'walk', label: '일반보행' },
@@ -103,8 +108,84 @@ function IeumApp() {
   const [playing, setPlaying] = useState(true);
   const [ambient, setAmbient] = useState<Level | 'idle'>('idle');
   const [tweaksOpen, setTweaksOpen] = useState(false);
+  const { location: currentLocation } = useLocationTracking(true);
+  const [origin, setOrigin] = useState<Place | null>(null);
+  const [destination, setDestination] = useState<Place | null>(null);
+  const [searchTarget, setSearchTarget] = useState<'origin' | 'destination'>('destination');
+  // 출발지를 직접 고르지 않았다면 현재 GPS 위치를 기본 출발지로 사용 (지오코딩 없이 좌표만 사용, 라벨만 "현재 위치")
+  const effectiveOrigin: Place | null = origin ?? (currentLocation
+    ? { placeName: '현재 위치', roadAddress: '', lng: currentLocation.longitude, lat: currentLocation.latitude, distance: null }
+    : null);
+
+  const [candidateQuery, setCandidateQuery] = useState<{ origin: Place; destination: Place } | null>(null);
+  const [candidates, setCandidates] = useState<RouteCandidate[] | null>(null);
+  const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState<string | null>(null);
+
+  const fetchCandidates = async (o: Place, d: Place) => {
+    setCandidateQuery({ origin: o, destination: d });
+    setScreen('routeCandidates');
+    setCandidatesLoading(true);
+    setCandidatesError(null);
+    setCandidates(null);
+    try {
+      const result = await searchRouteCandidates(o.lng, o.lat, d.lng, d.lat);
+      setCandidates(result);
+    } catch (e) {
+      setCandidatesError('경로 후보를 불러오지 못했습니다');
+    } finally {
+      setCandidatesLoading(false);
+    }
+  };
+
+  const [activeRoute, setActiveRoute] = useState<RouteResponse | null>(null);
+  const [routeCreating, setRouteCreating] = useState(false);
+  const [routeCreateError, setRouteCreateError] = useState<string | null>(null);
+
+  const selectCandidate = async (c: RouteCandidate) => {
+    if (!candidateQuery) return;
+    setRouteCreating(true);
+    setRouteCreateError(null);
+    try {
+      const route = await createRoute(candidateQuery.origin.lng, candidateQuery.origin.lat, candidateQuery.destination.lng, candidateQuery.destination.lat, c.searchOption);
+      setActiveRoute(route);
+      setNavCompleted(false);
+      setNavCompleteError(null);
+      setScreen('navigate');
+    } catch (e) {
+      setRouteCreateError('경로 생성에 실패했습니다.');
+    } finally {
+      setRouteCreating(false);
+    }
+  };
+
+  const [navCompleting, setNavCompleting] = useState(false);
+  const [navCompleteError, setNavCompleteError] = useState<string | null>(null);
+  const [navCompleted, setNavCompleted] = useState(false);
+
+  const completeNav = async () => {
+    if (!activeRoute) return;
+    setNavCompleting(true);
+    setNavCompleteError(null);
+    try {
+      await completeNavigation(activeRoute.navigationId, 0, true);
+      setNavCompleted(true);
+    } catch (e) {
+      setNavCompleteError('완료 처리에 실패했습니다.');
+    } finally {
+      setNavCompleting(false);
+    }
+  };
 
   React.useEffect(() => { setPlaying(tw.autoGuide); }, [tw.autoGuide]);
+
+  // 일반보행/길찾기 중일 때만 실시간 위험요소 안내(WebSocket 구독 + 위치 갱신마다 체크 트리거) 활성화
+  const hazardActive = screen === 'walk' || screen === 'navigate';
+  const guidance = useGuidanceSocket(hazardActive);
+  React.useEffect(() => {
+    if (!hazardActive || !currentLocation) return;
+    checkNearbyHazards(currentLocation.longitude, currentLocation.latitude).catch(() => {});
+  }, [hazardActive, currentLocation]);
 
   const base = THEMES[tw.direction];
   const theme: Theme = useMemo(() => (base.id === 'contrast' ? base : { ...base, primary: tw.accent }), [base, tw.accent]);
@@ -119,11 +200,57 @@ function IeumApp() {
 
   const screens: Record<ScreenId, React.ReactNode> = {
     home: <HomeScreen go={go} showRec={showRec} setShowRec={setShowRec} />,
-    walk: <WalkScreen playing={playing} setPlaying={setPlaying as any} big={tw.captionBig} />,
-    navigate: <NavigateScreen playing={playing} big={tw.captionBig} />,
+    walk: <WalkScreen playing={playing} setPlaying={setPlaying as any} big={tw.captionBig} guidance={guidance} />,
+    navigate: (
+      <NavigateScreen
+        playing={playing}
+        big={tw.captionBig}
+        origin={effectiveOrigin}
+        destination={destination}
+        route={activeRoute}
+        guidance={guidance}
+        onSearchOrigin={() => { setSearchTarget('origin'); setScreen('placeSearch'); }}
+        onSearchDestination={() => { setSearchTarget('destination'); setScreen('placeSearch'); }}
+        onComplete={completeNav}
+        completing={navCompleting}
+        completed={navCompleted}
+        completeError={navCompleteError}
+      />
+    ),
     settings: <SettingsScreen onBack={goHome} />,
     account: <AccountScreen onBack={goHome} />,
     camera: <CameraGateScreen target="walk" onScanned={() => setScreen('walk')} onCancel={goHome} />,
+    placeSearch: (
+      <PlaceSearchScreen
+        title={searchTarget === 'origin' ? '출발지 검색' : '목적지 검색'}
+        placeholder={searchTarget === 'origin' ? '출발지를 입력하세요' : '목적지를 입력하세요'}
+        currentLocation={currentLocation}
+        onSelect={(p) => {
+          if (searchTarget === 'origin') {
+            setOrigin(p);
+            if (destination) fetchCandidates(p, destination); else setScreen('navigate');
+          } else {
+            setDestination(p);
+            if (effectiveOrigin) fetchCandidates(effectiveOrigin, p); else setScreen('navigate');
+          }
+        }}
+        onCancel={() => setScreen('navigate')}
+      />
+    ),
+    routeCandidates: (
+      <RouteCandidatesScreen
+        origin={candidateQuery?.origin}
+        destination={candidateQuery?.destination}
+        candidates={candidates}
+        loading={candidatesLoading}
+        error={candidatesError}
+        onRetry={() => candidateQuery && fetchCandidates(candidateQuery.origin, candidateQuery.destination)}
+        onSelect={selectCandidate}
+        onBack={() => setScreen('navigate')}
+        creating={routeCreating}
+        createError={routeCreateError}
+      />
+    ),
   };
 
   return (

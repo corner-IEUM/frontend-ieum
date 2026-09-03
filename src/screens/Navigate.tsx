@@ -1,12 +1,16 @@
 // screens/Navigate.tsx — 길찾기 (통합 모드): 도보 → 버스 → 도보, 주변 설명 + 대중교통 탑승/하차 안내가 자동으로 끼어든다.
-import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Animated, Easing, Vibration, StyleSheet } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { View, Text, TouchableOpacity, Animated, Easing, Vibration, StyleSheet, ActivityIndicator } from 'react-native';
 import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { Icon, IconName } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level, Theme } from '../theme';
-import { ModeHeader, CaptionBar, Card, ctrlStyle } from '../ui';
+import { ModeHeader, CaptionBar, Card, ctrlStyle, GuidanceBanner } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
+import { Place, RouteResponse } from '../api';
+import { formatDistance, formatDuration } from './RouteCandidates';
+import { parseRouteSteps } from '../routeParser';
+import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 
 // ───────── legs ─────────
 const LEGS = [
@@ -240,16 +244,34 @@ function ArrivePanel() {
 }
 
 // ───────── main screen ─────────
-export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; big?: boolean; onBack?: () => void }) {
+export function NavigateScreen({
+  playing, big, onBack, origin, destination, route, guidance, onSearchOrigin, onSearchDestination,
+  onComplete, completing, completed, completeError,
+}: {
+  playing?: boolean; big?: boolean; onBack?: () => void; origin?: Place | null; destination?: Place | null;
+  route?: RouteResponse | null; guidance?: GuidanceMessage | null; onSearchOrigin?: () => void; onSearchDestination?: () => void;
+  onComplete?: () => void; completing?: boolean; completed?: boolean; completeError?: string | null;
+}) {
   const t = useTheme();
   const setAmbient = useAmbient();
   const [i, setI] = useState(0);
   const [off, setOff] = useState(false);
   const [haptic, setHaptic] = useState(false);
   const [sending, setSending] = useState(false);
-  const step = JOURNEY[i];
+
+  // route가 있으면 실제 티맵 턴바이턴 안내로, 없으면 목업(버스 탑승 포함) 시연 데이터로 진행
+  const journey: JourneyStep[] = useMemo(() => {
+    if (!route) return JOURNEY;
+    const steps = parseRouteSteps(route.routeData).map((s): JourneyStep => ({ leg: 'walk1', mode: 'walk', level: s.level, text: s.text, sub: s.sub, around: [] }));
+    steps.push({ leg: 'walk1', mode: 'arrive', level: 'safe', turn: '도착', text: '목적지에 도착했습니다', sub: destination?.placeName ?? '', around: [] });
+    return steps;
+  }, [route, destination]);
+
+  useEffect(() => { setI(0); }, [route]);
+
+  const step = journey[i] ?? journey[0];
   const danger = off || (step.level === 'danger' && haptic);
-  const atEnd = i >= JOURNEY.length - 1;
+  const atEnd = i >= journey.length - 1;
 
   useEffect(() => {
     setAmbient(off ? 'danger' : step.level);
@@ -257,7 +279,7 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
     if (step.transit && step.transit.kind === 'signal') { setSending(true); const id = setTimeout(() => setSending(false), 2200); return () => clearTimeout(id); }
     if (step.level === 'danger') { setHaptic(true); Vibration.vibrate([0, 200, 90, 200]); const id = setTimeout(() => setHaptic(false), 1400); return () => clearTimeout(id); }
     setHaptic(false);
-  }, [i]);
+  }, [i, journey]);
   useEffect(() => { setAmbient(off ? 'danger' : step.level); }, [off]);
 
   const deviate = () => { setOff(true); Vibration.vibrate([0, 250, 80, 250]); setTimeout(() => setOff(false), 1700); };
@@ -269,20 +291,48 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
 
   return (
     <View style={styles.container}>
-      <ModeHeader title="길찾기" icon="pin" onBack={onBack} right={<Text style={[styles.etaText, { color: t.textDim }]}>약 14분 · 1.2km</Text>} />
+      <ModeHeader title="길찾기" icon="pin" onBack={onBack} right={
+        route ? (
+          <Text style={[styles.etaText, { color: t.textDim }]}>
+            {formatDuration(route.duration)} · {formatDistance(route.distance)}
+          </Text>
+        ) : undefined
+      } />
 
-      <Card pad={16} tone={withAlpha(t.primary, 0.4)} style={styles.destCard}>
-        <View style={[styles.destIconCircle, { borderRadius: t.id === 'contrast' ? 8 : 12, backgroundColor: t.id === 'contrast' ? t.surface : withAlpha(t.primary, 0.16), borderWidth: t.id === 'contrast' ? 2 : 0, borderColor: t.primary }]}>
-          <Icon name="pin" size={26} color={t.primary} sw={2.1} />
-        </View>
-        <View style={styles.flex1}>
-          <Text style={[styles.destLabel, { color: t.textDim }]}>목적지</Text>
-          <Text style={[styles.destName, { color: t.text }]}>성수역 2번 출구</Text>
-        </View>
+      <Card pad={0} tone={withAlpha(t.primary, 0.4)} style={styles.odCard}>
+        <TouchableOpacity activeOpacity={0.85} onPress={onSearchOrigin} style={styles.odRow}>
+          <View style={[styles.odIconCircle, { borderRadius: t.id === 'contrast' ? 8 : 12, backgroundColor: t.id === 'contrast' ? t.surface : withAlpha(t.textDim, 0.14), borderWidth: t.id === 'contrast' ? 2 : 0, borderColor: t.textDim }]}>
+            <Icon name="compass" size={22} color={t.textDim} sw={2.1} />
+          </View>
+          <View style={styles.flex1}>
+            <Text style={[styles.destLabel, { color: t.textDim }]}>출발지</Text>
+            <Text style={[styles.destName, { color: origin ? t.text : t.textFaint }]}>{origin?.placeName ?? '출발지를 검색하세요'}</Text>
+          </View>
+          <Icon name="chevron" size={20} color={t.textFaint} sw={2.4} />
+        </TouchableOpacity>
+
+        <View style={[styles.odDivider, { backgroundColor: t.border }]} />
+
+        <TouchableOpacity activeOpacity={0.85} onPress={onSearchDestination} style={styles.odRow}>
+          <View style={[styles.odIconCircle, { borderRadius: t.id === 'contrast' ? 8 : 12, backgroundColor: t.id === 'contrast' ? t.surface : withAlpha(t.primary, 0.16), borderWidth: t.id === 'contrast' ? 2 : 0, borderColor: t.primary }]}>
+            <Icon name="pin" size={22} color={t.primary} sw={2.1} />
+          </View>
+          <View style={styles.flex1}>
+            <Text style={[styles.destLabel, { color: t.textDim }]}>목적지</Text>
+            <Text style={[styles.destName, { color: destination ? t.text : t.textFaint }]}>{destination?.placeName ?? '목적지를 검색하세요'}</Text>
+          </View>
+          <Icon name="chevron" size={20} color={t.textFaint} sw={2.4} />
+        </TouchableOpacity>
       </Card>
 
-      <LegBar currentLeg={step.leg} />
-      <MiniMap progress={i / (JOURNEY.length - 1)} />
+      {!route ? (
+        <View style={styles.emptyStateBox}>
+          <Icon name="pin" size={40} color={t.textFaint} sw={1.8} />
+          <Text style={[styles.emptyStateText, { color: t.textDim }]}>목적지를 검색하면 경로 안내가 시작됩니다</Text>
+        </View>
+      ) : (
+      <>
+      <MiniMap progress={journey.length > 1 ? i / (journey.length - 1) : 1} />
 
       {step.mode === 'transit'
         ? <TransitVisual step={step.transit!} sending={sending} t={t} />
@@ -292,19 +342,37 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
 
       {step.mode === 'walk' && step.around && step.around.length > 0 ? <AroundPanel items={step.around} /> : null}
 
+      <GuidanceBanner guidance={guidance ?? null} />
+
       <CaptionBar level={off ? 'danger' : step.level} text={off ? '경로를 벗어났습니다' : step.text} sub={off ? '오던 길로 5m 돌아가세요 · 강한 진동' : step.sub} speaking={playing} big={big} />
 
       <View style={styles.navControlsRow}>
         <TouchableOpacity onPress={() => setI((v) => Math.max(0, v - 1))} disabled={i === 0} style={[ctrlStyle(t), { opacity: i === 0 ? 0.4 : 1 }]}>
           <Icon name="chevronL" size={22} color={t.text} sw={2.4} />
         </TouchableOpacity>
-        <TouchableOpacity onPress={() => setI((v) => Math.min(JOURNEY.length - 1, v + 1))} disabled={atEnd}
-          style={[ctrlStyle(t), styles.nextButtonInner, { opacity: atEnd ? 0.5 : 1, backgroundColor: atEnd ? t.surface : t.primary, borderColor: atEnd ? t.border : t.primary }]}>
-          <Text style={[styles.nextButtonText, { color: atEnd ? t.textDim : t.onPrimary }]}>{atEnd ? '안내 완료' : '다음 안내'}</Text>
-          {!atEnd ? <Icon name="chevron" size={20} color={t.onPrimary} sw={2.4} /> : null}
-        </TouchableOpacity>
-        <Text style={[styles.counterText, { color: t.textFaint }]}>{i + 1}/{JOURNEY.length}</Text>
+        {(() => {
+          const canComplete = atEnd && !!route; // 실제 경로일 때만 완료 처리 가능 (목업 데이터엔 navigationId가 없음)
+          const nextDisabled = atEnd ? (!canComplete || completed || completing) : false;
+          const onPress = () => {
+            if (!atEnd) { setI((v) => Math.min(journey.length - 1, v + 1)); return; }
+            if (canComplete && !completed && !completing) onComplete?.();
+          };
+          const label = completed ? '완료됨' : completing ? '처리 중…' : atEnd ? (canComplete ? '보행 완료' : '안내 완료') : '다음 안내';
+          const active = !atEnd || (canComplete && !completed);
+          return (
+            <TouchableOpacity onPress={onPress} disabled={nextDisabled}
+              style={[ctrlStyle(t), styles.nextButtonInner, { opacity: nextDisabled && !completed ? 0.5 : 1, backgroundColor: completed ? t.surface : active ? t.primary : t.surface, borderColor: completed ? t.status.safe.fg : active ? t.primary : t.border }]}>
+              <Text style={[styles.nextButtonText, { color: completed ? t.status.safe.fg : active ? t.onPrimary : t.textDim }]}>{label}</Text>
+              {completing ? <ActivityIndicator color={t.onPrimary} size="small" />
+                : completed ? <Icon name="check" size={20} color={t.status.safe.fg} sw={2.4} />
+                  : !atEnd ? <Icon name="chevron" size={20} color={t.onPrimary} sw={2.4} /> : null}
+            </TouchableOpacity>
+          );
+        })()}
+        <Text style={[styles.counterText, { color: t.textFaint }]}>{i + 1}/{journey.length}</Text>
       </View>
+
+      {completeError ? <Text style={[styles.completeErrorText, { color: t.status.danger.fg }]}>{completeError}</Text> : null}
 
       <TouchableOpacity onPress={deviate} style={[ctrlStyle(t), styles.deviateButtonInner, { borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
         <Icon name="alert" size={18} color={t.status.danger.fg} sw={2.2} />
@@ -312,6 +380,8 @@ export function NavigateScreen({ playing, big, onBack }: { playing?: boolean; bi
       </TouchableOpacity>
 
       <HapticFlash show={danger} />
+      </>
+      )}
     </View>
   );
 }
@@ -362,14 +432,19 @@ const styles = StyleSheet.create({
   arriveSub: { fontSize: 15, fontWeight: '600' },
   container: { padding: 18, paddingTop: 4, gap: 14 },
   etaText: { fontSize: 14, fontWeight: '800' },
-  destCard: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  destIconCircle: { width: 46, height: 46, alignItems: 'center', justifyContent: 'center' },
+  odCard: { overflow: 'hidden' },
+  emptyStateBox: { alignItems: 'center', justifyContent: 'center', gap: 14, paddingVertical: 60 },
+  emptyStateText: { fontSize: 15, fontWeight: '700', textAlign: 'center' },
+  odRow: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 16 },
+  odIconCircle: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  odDivider: { height: 1, marginLeft: 16 },
   destLabel: { fontSize: 12.5, fontWeight: '800', letterSpacing: 0.5 },
-  destName: { fontSize: 19, fontWeight: '800', marginTop: 1 },
+  destName: { fontSize: 18, fontWeight: '800', marginTop: 1 },
   navControlsRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   nextButtonInner: { flex: 1, gap: 8 },
   nextButtonText: { fontWeight: '800', fontSize: 16 },
   counterText: { fontSize: 13, fontWeight: '700', minWidth: 42, textAlign: 'right' },
+  completeErrorText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
   deviateButtonInner: { gap: 8 },
   deviateText: { fontWeight: '800', fontSize: 14 },
 });

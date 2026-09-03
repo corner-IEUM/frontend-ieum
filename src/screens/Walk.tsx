@@ -4,10 +4,11 @@ import { View, Text, TouchableOpacity, Vibration, StyleSheet } from 'react-nativ
 import { Icon } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level } from '../theme';
-import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle } from '../ui';
+import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle, GuidanceBanner } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { completeWalk } from '../api';
+import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 
 interface Scene { level: Level; text: string; sub: string; objects: SceneObj[]; haptic?: boolean; traffic?: 'red' | 'green'; }
 
@@ -54,7 +55,7 @@ function TrafficCard({ state }: { state: 'red' | 'green' }) {
   );
 }
 
-export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; setPlaying: (f: (p: boolean) => boolean | boolean) => void; big?: boolean }) {
+export function WalkScreen({ playing, setPlaying, big, guidance }: { playing: boolean; setPlaying: (f: (p: boolean) => boolean | boolean) => void; big?: boolean; guidance?: GuidanceMessage | null }) {
   const t = useTheme();
   const setAmbient = useAmbient();
   const [i, setI] = useState(0);
@@ -115,6 +116,8 @@ export function WalkScreen({ playing, setPlaying, big }: { playing: boolean; set
       </View>
 
       {scene.traffic ? <TrafficCard state={scene.traffic} /> : null}
+
+      <GuidanceBanner guidance={guidance ?? null} />
 
       <CaptionBar level={scene.level} text={scene.text} sub={scene.sub} speaking={playing} big={big} />
 
