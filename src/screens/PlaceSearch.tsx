@@ -5,10 +5,10 @@ import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeHeader, Card } from '../ui';
-import { searchPlaces, Place } from '../api';
+import { searchPlaces, Place, AuthExpiredError } from '../api';
 import { Coords } from '../hooks/useLocationTracking';
 
-export function PlaceSearchScreen({ title = '목적지 검색', placeholder = '목적지를 입력하세요', currentLocation, onSelect, onCancel }: { title?: string; placeholder?: string; currentLocation?: Coords | null; onSelect: (place: Place) => void; onCancel: () => void }) {
+export function PlaceSearchScreen({ title = '목적지 검색', placeholder = '목적지를 입력하세요', currentLocation, onSelect, onCancel, onAuthExpired }: { title?: string; placeholder?: string; currentLocation?: Coords | null; onSelect: (place: Place) => void; onCancel: () => void; onAuthExpired: () => void }) {
   const t = useTheme();
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Place[]>([]);
@@ -32,6 +32,7 @@ export function PlaceSearchScreen({ title = '목적지 검색', placeholder = '�
         setResults(places);
       } catch (e) {
         if (reqId !== requestIdRef.current) return;
+        if (e instanceof AuthExpiredError) { onAuthExpired(); return; }
         setError('검색 중 오류가 발생했습니다');
         setResults([]);
       } finally {

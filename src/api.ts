@@ -1,7 +1,9 @@
 // api.ts -API 공통 설정 및 토큰 관리
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const API_BASE_URL = "http://192.168.45.163:8080";
+export const API_BASE_URL = "http://192.168.200.115:8080";
+// AI 서버(FastAPI, YOLO 추론)는 백엔드와 별도 프로세스/포트 — 로컬 IP는 백엔드와 동일 머신 기준
+export const AI_SERVER_WS_URL = "ws://192.168.200.115:8000/ws/detect/live";
 
 const TOKEN_KEY = "accessToken";
 
@@ -17,6 +19,13 @@ export async function getToken(){
 export async function clearToken() {
   await AsyncStorage.removeItem(TOKEN_KEY);
 }
+// 토큰 만료/누락으로 인증이 거부됐을 때(401/403) 던지는 에러 — 호출부에서 로그인 화면 전환 등에 사용
+export class AuthExpiredError extends Error {
+  constructor(message = '로그인이 만료되었습니다. 다시 로그인해주세요.') {
+    super(message);
+    this.name = 'AuthExpiredError';
+  }
+}
 // 인증이 필요한 API 요청을 위한 fetch 함수
 export async function authFetch(path: string, options: RequestInit = {}) {
   const token = await getToken();
@@ -26,6 +35,11 @@ export async function authFetch(path: string, options: RequestInit = {}) {
     ...(options.headers || {}),
   };
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
+  // 401/403은 토큰이 만료됐거나 아예 없는 경우이므로, 무효 토큰을 지우고 호출부가 알아챌 수 있게 던져준다
+  if (res.status === 401 || res.status === 403) {
+    await clearToken();
+    throw new AuthExpiredError();
+  }
   return res;
 }
 // 로그인/회원가입 API 요청 함수
@@ -141,5 +155,20 @@ export async function completeWalk(routeData: unknown, totalDistance: number, to
     body: JSON.stringify({ routeData, totalDistance, totalTime, obstacleCount }),
   });
   if (!res.ok) throw new Error('보행 기록 저장에 실패했습니다');
+  return res.json();
+}
+// 저장된 보행 기록(WalkLog) 한 건 — 백엔드 WalkLogResponse와 동일한 필드 구성
+export interface WalkLog {
+  id: number;
+  routeData: string;
+  totalDistance: number; // m
+  totalTime: number; // s
+  obstacleCount: number;
+  createdAt: string;
+}
+// 이동경로(보행 기록) 목록 조회 API 요청 함수 (JWT 인증 필요)
+export async function getWalkLogs(): Promise<WalkLog[]> {
+  const res = await authFetch('/api/walk/logs');
+  if (!res.ok) throw new Error('보행 기록 조회에 실패했습니다');
   return res.json();
 }
