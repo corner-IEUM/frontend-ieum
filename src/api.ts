@@ -10,13 +10,15 @@ export const AI_SERVER_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_WS_URL ?? "ws:
 // 예전엔 이 둘을 별도의 하드코딩된 IP로 폴백시켰는데, update-ip.sh는 EXPO_PUBLIC_AI_SERVER_WS_URL만
 // 갱신하고 이 둘은 모르기 때문에 PC의 IP가 바뀔 때마다 여기만 옛날 IP로 남아 조용히 깨지는 문제가
 // 있었다 — AI_SERVER_WS_URL에서 host:port만 뽑아 재사용해서 같은 실수가 다시 안 생기게 한다.
+// cloudflared 같은 TLS 전용 터널은 ws://로 접속하면 거부되므로(530), 원래 스킴(ws/wss)을 그대로 재사용한다
+const AI_SERVER_WS_SCHEME = /^wss:\/\//.test(AI_SERVER_WS_URL) ? "wss" : "ws";
 const AI_SERVER_HOST_PORT = AI_SERVER_WS_URL.replace(/^wss?:\/\//, "").split("/")[0];
 // 데모 모드용: AI 서버가 자체적으로 사전 녹화 영상(config.VIDEO_SOURCE, 기본 data/demo.mp4)을
 // 읽어 감지 결과를 push하는 경로. 클라이언트는 프레임을 보낼 필요 없이 연결만 하면 된다.
-export const AI_SERVER_DEMO_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_DEMO_WS_URL ?? `ws://${AI_SERVER_HOST_PORT}/ws/detect`;
+export const AI_SERVER_DEMO_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_DEMO_WS_URL ?? `${AI_SERVER_WS_SCHEME}://${AI_SERVER_HOST_PORT}/ws/detect`;
 // AI 서버가 정적 파일로도 내려주는 데모 영상(ai/server.py의 /media 마운트) — 화면에 실제로
 // 재생되는 모습을 보여주기 위한 HTTP(스트리밍) 주소.
-export const DEMO_VIDEO_URL = process.env.EXPO_PUBLIC_DEMO_VIDEO_URL ?? `http://${AI_SERVER_HOST_PORT}/media/demo.mp4`;
+export const DEMO_VIDEO_URL = process.env.EXPO_PUBLIC_DEMO_VIDEO_URL ?? `${AI_SERVER_WS_SCHEME === "wss" ? "https" : "http"}://${AI_SERVER_HOST_PORT}/media/demo.mp4`;
 
 // 일반보행 화면의 인식 모드 초기값 — 사용자가 화면의 토글로 언제든 바꿀 수 있지만, 앱을 처음
 // 열었을 때 무엇으로 시작할지는 이 값을 따른다. EXPO_PUBLIC_DEMO_MODE로 오버라이드 가능.
@@ -171,7 +173,9 @@ export async function getMyInfo() {
 export async function completeWalk(routeData: unknown, totalDistance: number, totalTime: number, obstacleCount: number) {
   const res = await authFetch('/api/walk/complete', {
     method: 'POST',
-    body: JSON.stringify({ routeData, totalDistance, totalTime, obstacleCount }),
+    // 백엔드 WalkCompleteRequest.routeData는 String 필드 — 배열/객체를 그대로 보내면
+    // "Cannot deserialize String from Array" 파싱 에러(400)가 나므로 문자열로 한 번 더 인코딩한다
+    body: JSON.stringify({ routeData: JSON.stringify(routeData), totalDistance, totalTime, obstacleCount }),
   });
   if (!res.ok) throw new Error('보행 기록 저장에 실패했습니다');
   return res.json();
