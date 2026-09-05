@@ -5,7 +5,7 @@ import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeHeader, Card } from '../ui';
-import { searchPlaces, Place, AuthExpiredError } from '../api';
+import { searchPlaces, Place, AuthExpiredError, API_BASE_URL } from '../api';
 import { Coords } from '../hooks/useLocationTracking';
 
 export function PlaceSearchScreen({ title = '목적지 검색', placeholder = '목적지를 입력하세요', currentLocation, onSelect, onCancel, onAuthExpired }: { title?: string; placeholder?: string; currentLocation?: Coords | null; onSelect: (place: Place) => void; onCancel: () => void; onAuthExpired: () => void }) {
@@ -32,7 +32,12 @@ export function PlaceSearchScreen({ title = '목적지 검색', placeholder = '�
         setResults(places);
       } catch (e) {
         if (reqId !== requestIdRef.current) return;
-        if (e instanceof AuthExpiredError) { onAuthExpired(); return; }
+        // 이 화면에서 "검색 중 오류가 발생했습니다"만 보고는 네트워크 문제(IP/방화벽)인지
+        // 백엔드/Kakao 쪽 문제인지 구분이 안 되므로, 실제 원인을 콘솔에 남긴다.
+        // TypeError(네트워크 요청 실패 등)면 fetch 자체가 API_BASE_URL에 도달 못한 것 —
+        // 같은 Wi-Fi인지, .env의 IP가 최신인지(update-ip.sh 이후 앱을 다시 로드했는지) 확인할 것.
+        console.error('[장소검색] 실패 — url:', API_BASE_URL, 'query:', q, 'error:', e);
+        if (e instanceof AuthExpiredError) onAuthExpired();
         setError('검색 중 오류가 발생했습니다');
         setResults([]);
       } finally {

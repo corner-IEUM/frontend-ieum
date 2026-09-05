@@ -1,6 +1,6 @@
 // screens/Walk.tsx
 import React, { useEffect, useRef, useState } from 'react';
-import { View, Text, TouchableOpacity, Vibration, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Vibration, StyleSheet, Alert } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { Icon, IconName } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
@@ -9,7 +9,7 @@ import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle, GuidanceBanner } f
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { useLiveDetection, DetectionMessage } from '../hooks/useLiveDetection';
-import { completeWalk } from '../api';
+import { completeWalk, AuthExpiredError } from '../api';
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 
 interface Scene { level: Level; text: string; sub: string; objects: SceneObj[]; haptic?: boolean; traffic?: 'red' | 'green'; }
@@ -204,7 +204,13 @@ export function WalkScreen({ playing, setPlaying, big, guidance }: { playing: bo
     try {
       await completeWalk(routeData, totalDistance, totalTime, obstacleCount);
     } catch (e) {
-      console.error('보행 기록 저장 실패:', e);
+      if (e instanceof AuthExpiredError) {
+        // 비로그인(또는 세션 만료) 상태 — 보행 종료 자체는 정상 진행하고, 기록 저장만 안내만 하고 넘어간다
+        // (강제로 로그인 화면으로 보내지 않음: walk 모드는 비로그인으로도 이용 가능해야 하므로)
+        Alert.alert('기록이 저장되지 않았습니다', '로그인하면 보행 기록이 저장됩니다.');
+      } else {
+        console.error('보행 기록 저장 실패:', e);
+      }
     } finally {
       // "다시 시작"으로 다음 보행이 시작될 때 이전 구간 값이 섞여 WalkLog가
       // 중복/누적 저장되지 않도록, 성공·실패 여부와 무관하게 항상 초기화한다

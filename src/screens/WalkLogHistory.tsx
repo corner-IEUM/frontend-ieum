@@ -53,7 +53,7 @@ export function WalkLogHistoryScreen({ onBack, onAuthExpired }: { onBack: () => 
     getWalkLogs()
       .then(setLogs)
       .catch((e) => {
-        if (e instanceof AuthExpiredError) { onAuthExpired(); return; }
+        if (e instanceof AuthExpiredError) onAuthExpired();
         setError('보행 기록을 불러오지 못했습니다');
       })
       .finally(() => setLoading(false));

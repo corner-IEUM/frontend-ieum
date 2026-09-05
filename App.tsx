@@ -15,11 +15,12 @@ import { CameraGateScreen } from './src/screens/CameraGate';
 import { PlaceSearchScreen } from './src/screens/PlaceSearch';
 import { RouteCandidatesScreen } from './src/screens/RouteCandidates';
 import { WalkLogHistoryScreen } from './src/screens/WalkLogHistory';
-import { Place, RouteCandidate, RouteResponse, searchRouteCandidates, createRoute, checkNearbyHazards, completeNavigation, AuthExpiredError } from './src/api';
+import { Place, RouteCandidate, RouteResponse, searchRouteCandidates, createRoute, checkNearbyHazards, completeNavigation, AuthExpiredError, getToken, getMyInfo, DEFAULT_DEMO_MODE } from './src/api';
 import { useLocationTracking } from './src/hooks/useLocationTracking';
 import { useGuidanceSocket } from './src/hooks/useGuidanceSocket';
 
 type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates' | 'walkLogHistory';
+type UserInfo = { nickname: string; email: string };
 const TABS: { id: ScreenId; icon: IconName; label: string }[] = [
   { id: 'home', icon: 'home', label: '홈' },
   { id: 'walk', icon: 'walk', label: '일반보행' },
@@ -83,13 +84,53 @@ function IeumApp() {
   const [tw, setTw] = useState({ direction: 'light' as DirId, accent: '#2f6bff', autoGuide: true, captionBig: false });
   const set = (k: string, v: any) => setTw((p) => ({ ...p, [k]: v }));
   const [screen, setScreen] = useState<ScreenId>('home');
+  // 로그인 상태 — Account.tsx 로컬 state였던 걸 끌어올림: handleMaybeAuthExpired 등 여러 화면/콜백이 함께 참조하기 때문
+  const [authed, setAuthed] = useState(false);
+  const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
+  // 저장된 토큰 확인 중 여부 — 확인이 끝나기 전에는 계정 화면에 로그인 폼이 깜빡 보이면 안 됨
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  // 앱 최초 실행 시 저장된 토큰이 있는지 확인해서 로그인 상태를 복원 (기존 Account.tsx 로직 이동)
+  React.useEffect(() => {
+    (async () => {
+      const token = await getToken();
+      if (token) {
+        try {
+          const me = await getMyInfo();
+          setUserInfo({ nickname: me.nickname, email: me.email });
+          setAuthed(true);
+        } catch (e) {
+          setAuthed(false);
+        }
+      }
+      setCheckingAuth(false);
+    })();
+  }, []);
+
+  const handleAuthChange = (isAuthed: boolean, info?: UserInfo | null) => {
+    setAuthed(isAuthed);
+    setUserInfo(info ?? null);
+  };
+
   // 토큰 만료/누락(401·403 → AuthExpiredError)을 감지했을 때 공통으로 처리하는 지점 —
   // 사용자에게 안내하고 계정(로그인) 화면으로 강제 전환한다
   const handleAuthExpired = () => {
+    setAuthed(false);
+    setUserInfo(null);
     Alert.alert('로그인이 만료되었습니다', '다시 로그인해주세요');
     setScreen('account');
   };
+  // walk/navigate 등은 비로그인으로도 진입 가능하므로, 로그인 없이 쓴 기능이 인증 필요 API에서
+  // 401/403을 받는 것은 "정상"이다 — 이 경우까지 handleAuthExpired()로 로그인 화면에 강제로
+  // 돌려보내면 게스트 이용이 막혀버리므로, 실제로 로그인돼 있던 세션이 끊긴 경우(authed===true)에만
+  // handleAuthExpired()를 호출하고 게스트는 조용히 무시한다
+  const handleMaybeAuthExpired = () => {
+    if (authed) handleAuthExpired();
+  };
   const [showRec, setShowRec] = useState(true);
+  // 일반보행 인식 모드(실시간 카메라 / 데모 영상) — CameraGateScreen의 토글로 전환하고,
+  // WalkScreen이 이 값에 따라 /ws/detect/live(라이브)와 /ws/detect(데모) 중 하나로 붙는다
+  const [demoMode, setDemoMode] = useState(DEFAULT_DEMO_MODE);
   const [playing, setPlaying] = useState(true);
   const [ambient, setAmbient] = useState<Level | 'idle'>('idle');
   const [tweaksOpen, setTweaksOpen] = useState(false);
@@ -117,7 +158,7 @@ function IeumApp() {
       const result = await searchRouteCandidates(o.lng, o.lat, d.lng, d.lat);
       setCandidates(result);
     } catch (e) {
-      if (e instanceof AuthExpiredError) { handleAuthExpired(); return; }
+      if (e instanceof AuthExpiredError) { handleMaybeAuthExpired(); }
       setCandidatesError('경로 후보를 불러오지 못했습니다');
     } finally {
       setCandidatesLoading(false);
@@ -139,7 +180,7 @@ function IeumApp() {
       setNavCompleteError(null);
       setScreen('navigate');
     } catch (e) {
-      if (e instanceof AuthExpiredError) { handleAuthExpired(); return; }
+      if (e instanceof AuthExpiredError) { handleMaybeAuthExpired(); }
       setRouteCreateError('경로 생성에 실패했습니다.');
     } finally {
       setRouteCreating(false);
@@ -169,7 +210,7 @@ function IeumApp() {
       await completeNavigation(activeRoute.navigationId, 0, true);
       setNavCompleted(true);
     } catch (e) {
-      if (e instanceof AuthExpiredError) { handleAuthExpired(); return; }
+      if (e instanceof AuthExpiredError) { handleMaybeAuthExpired(); }
       setNavCompleteError('완료 처리에 실패했습니다.');
     } finally {
       setNavCompleting(false);
@@ -184,7 +225,7 @@ function IeumApp() {
   React.useEffect(() => {
     if (!hazardActive || !currentLocation) return;
     checkNearbyHazards(currentLocation.longitude, currentLocation.latitude).catch((e) => {
-      if (e instanceof AuthExpiredError) handleAuthExpired();
+      if (e instanceof AuthExpiredError) handleMaybeAuthExpired();
     });
   }, [hazardActive, currentLocation]);
 
@@ -193,15 +234,16 @@ function IeumApp() {
   const grad = base.id === 'signal' ? ambientGrad(base, ambient) : base.bgGrad;
 
   const go = (s: string) => {
+    const target = s as ScreenId;
     setAmbient('idle');
-    if (s === 'walk') { setScreen('camera'); return; }
-    setScreen(s as ScreenId);
+    if (target === 'walk') { setScreen('camera'); return; }
+    setScreen(target);
   };
   const goHome = () => go('home');
 
   const screens: Record<ScreenId, React.ReactNode> = {
     home: <HomeScreen go={go} showRec={showRec} setShowRec={setShowRec} />,
-    walk: <WalkScreen playing={playing} setPlaying={setPlaying as any} big={tw.captionBig} guidance={guidance} />,
+    walk: <WalkScreen playing={playing} setPlaying={setPlaying as any} big={tw.captionBig} guidance={guidance} demoMode={demoMode} />,
     navigate: (
       <NavigateScreen
         playing={playing}
@@ -221,8 +263,8 @@ function IeumApp() {
       />
     ),
     settings: <SettingsScreen onBack={goHome} />,
-    account: <AccountScreen onBack={goHome} />,
-    camera: <CameraGateScreen target="walk" onScanned={() => setScreen('walk')} onCancel={goHome} />,
+    account: <AccountScreen onBack={goHome} authed={authed} checkingAuth={checkingAuth} userInfo={userInfo} onAuthChange={handleAuthChange} />,
+    camera: <CameraGateScreen target="walk" onScanned={() => setScreen('walk')} onCancel={goHome} demoMode={demoMode} onDemoModeChange={setDemoMode} />,
     placeSearch: (
       <PlaceSearchScreen
         title={searchTarget === 'origin' ? '출발지 검색' : '목적지 검색'}
@@ -238,7 +280,7 @@ function IeumApp() {
           }
         }}
         onCancel={() => setScreen('navigate')}
-        onAuthExpired={handleAuthExpired}
+        onAuthExpired={handleMaybeAuthExpired}
       />
     ),
     routeCandidates: (
@@ -256,7 +298,7 @@ function IeumApp() {
       />
     ),
     // 이동경로 저장(보행 기록) 목록 화면
-    walkLogHistory: <WalkLogHistoryScreen onBack={goHome} onAuthExpired={handleAuthExpired} />,
+    walkLogHistory: <WalkLogHistoryScreen onBack={goHome} onAuthExpired={handleMaybeAuthExpired} />,
   };
 
   return (

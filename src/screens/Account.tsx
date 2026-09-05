@@ -1,39 +1,32 @@
 // screens/Account.tsx — 계정 (로그인 / 회원가입 / 프로필)
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ActivityIndicator } from 'react-native';
 import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeHeader, Card, Segmented, Field } from '../ui';
-import { login, signup, clearToken, getToken, getMyInfo } from '../api'; // 로그인/회원가입/토큰삭제/토큰조회/내정보조회 함수 가져오기
+import { login, signup, clearToken, getMyInfo } from '../api'; // 로그인/회원가입/토큰삭제/내정보조회 함수 가져오기
 
-export function AccountScreen({ onBack }: { onBack?: () => void }) {
+type UserInfo = { nickname: string; email: string };
+
+// 로그인 상태(authed)는 App.tsx(IeumApp)로 끌어올려짐 — handleMaybeAuthExpired 등 여러 화면/콜백이
+// 함께 참조하기 때문에 여기서는 props로 받고, 로그인/회원가입/로그아웃 성공 시 onAuthChange로 상위에 알려준다
+export function AccountScreen({
+  onBack,
+  authed,
+  checkingAuth,
+  userInfo,
+  onAuthChange,
+}: {
+  onBack?: () => void;
+  authed: boolean;
+  checkingAuth: boolean;
+  userInfo: UserInfo | null;
+  onAuthChange: (authed: boolean, info?: UserInfo | null) => void;
+}) {
   const t = useTheme();
   const isC = t.id === 'contrast';
-  const [authed, setAuthed] = useState(false); // 로그인 상태 여부
   const [mode, setMode] = useState('login'); // 'login' 또는 'signup'
-  // 저장된 토큰 확인 중 여부 — 확인이 끝나기 전에는 로그인 화면이 보이면 안 됨
-  const [checkingAuth, setCheckingAuth] = useState(true);
-
-  // 앱(화면) 시작 시 저장된 토큰이 있는지 확인해서 로그인 상태를 복원
-  useEffect(() => {
-    (async () => {
-      const token = await getToken();
-      if (token) {
-        try {
-          // 토큰이 있으면 내 정보를 조회해서 nickname/email까지 채운 뒤 로그인 상태로 진입
-          const me = await getMyInfo();
-          setNickname(me.nickname);
-          setEmail(me.email);
-          setAuthed(true);
-        } catch (e) {
-          // 토큰 만료 등으로 조회 실패 시 로그인 안 된 상태로 되돌림
-          setAuthed(false);
-        }
-      }
-      setCheckingAuth(false); // 확인 완료
-    })();
-  }, []);
 
   // 입력 필드 값 저장용 state
   const [nickname, setNickname] = useState('');
@@ -58,7 +51,9 @@ export function AccountScreen({ onBack }: { onBack?: () => void }) {
         // 로그인 모드면: 로그인만 진행
         await login(email, password);
       }
-      setAuthed(true); // 성공하면 로그인 완료 화면으로 전환
+      // 내 정보를 조회해서 nickname/email까지 채운 뒤, 로그인 상태를 상위(App.tsx)로 알림
+      const me = await getMyInfo();
+      onAuthChange(true, { nickname: me.nickname, email: me.email });
     } catch (e: any) {
       // 실패하면 에러 메시지 화면에 표시
       setError(e.message || '오류가 발생했습니다');
@@ -70,7 +65,7 @@ export function AccountScreen({ onBack }: { onBack?: () => void }) {
   // 로그아웃 버튼 눌렀을 때 실행되는 함수
   const handleLogout = async () => {
     await clearToken(); // 저장된 토큰 삭제
-    setAuthed(false);   // 로그인 전 화면으로 전환
+    onAuthChange(false, null); // 로그인 전 상태를 상위(App.tsx)로 알림
     // 입력했던 값들도 초기화
     setEmail('');
     setPassword('');
@@ -92,9 +87,9 @@ export function AccountScreen({ onBack }: { onBack?: () => void }) {
             <Icon name="person" size={40} color={t.primary} sw={2} />
           </View>
           <View style={styles.nameBlock}>
-            {/* 하드코딩된 이름/이메일 대신, 실제로 로그인한 값 표시 */}
-            <Text style={[styles.nameText, { color: t.text }]}>{nickname || email}</Text>
-            <Text style={[styles.emailText, { color: t.textDim }]}>{email}</Text>
+            {/* 하드코딩된 이름/이메일 대신, 실제로 로그인한 값 표시 (App.tsx에서 내려온 userInfo) */}
+            <Text style={[styles.nameText, { color: t.text }]}>{userInfo?.nickname || userInfo?.email}</Text>
+            <Text style={[styles.emailText, { color: t.textDim }]}>{userInfo?.email}</Text>
           </View>
         </Card>
         <Card style={styles.menuCard}>
