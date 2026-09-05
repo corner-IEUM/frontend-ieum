@@ -30,7 +30,8 @@ yarn-error.*
 .DS_Store
 *.pem
 
-# local env files
+# local env files (카카오맵 JS 키 등 개인/로컬 설정값 — 커밋 방지)
+.env
 .env*.local
 
 # typescript
