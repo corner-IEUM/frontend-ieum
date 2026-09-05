@@ -7,8 +7,10 @@ import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level } from '../theme';
 import { ModeHeader, StatusPill, CaptionBar, Card, ctrlStyle, GuidanceBanner } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
+import { DemoVideoFeed } from '../DemoVideoFeed';
 import { useLocationTracking } from '../hooks/useLocationTracking';
 import { useLiveDetection, DetectionMessage } from '../hooks/useLiveDetection';
+import { useDemoDetection } from '../hooks/useDemoDetection';
 import { completeWalk, AuthExpiredError } from '../api';
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 
@@ -95,13 +97,13 @@ function TrafficCard({ state }: { state: 'red' | 'green' }) {
   );
 }
 
-// 카메라 미리보기 썸네일 + AI 서버 연결 상태 표시
-function CameraStatusRow({ cameraRef, onCameraReady, pictureSize, status, playing }: {
-  cameraRef: React.RefObject<CameraView | null>;
-  onCameraReady: () => void;
-  pictureSize?: string;
+// AI 서버 연결 상태 표시. 인식 모드(실시간/데모) 전환은 보행 시작 전 화면(CameraGateScreen)에서
+// 하도록 하고, 실제 카메라/데모 영상 화면은 아래 SceneView 박스가 보여준다(카메라 세션은 기기당
+// 하나만 열어야 리소스 충돌이 없으므로, 여기서는 상태 아이콘/텍스트만 담당한다).
+function CameraStatusRow({ status, playing, demo }: {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   playing: boolean;
+  demo: boolean;
 }) {
   const t = useTheme();
   // 일시정지 중에는 disconnected 상태가 정상 동작이므로, "연결 끊김" 경고색이 아니라
@@ -109,8 +111,8 @@ function CameraStatusRow({ cameraRef, onCameraReady, pictureSize, status, playin
   const cfg = !playing
     ? { c: t.textDim, label: '일시정지됨' }
     : {
-        connecting: { c: t.textDim, label: 'AI 서버 연결 중…' },
-        connected: { c: t.status.safe.fg, label: '실시간 인식 중' },
+        connecting: { c: t.textDim, label: demo ? '데모 서버 연결 중…' : 'AI 서버 연결 중…' },
+        connected: { c: t.status.safe.fg, label: demo ? '데모 영상 인식 중' : '실시간 인식 중' },
         disconnected: { c: t.status.caution.fg, label: 'AI 서버 연결 끊김 · 재연결 시도 중' },
         error: { c: t.status.danger.fg, label: 'AI 서버에 연결할 수 없습니다' },
       }[status];
@@ -118,20 +120,20 @@ function CameraStatusRow({ cameraRef, onCameraReady, pictureSize, status, playin
   return (
     <View style={styles.cameraRow}>
       <View style={[styles.cameraThumb, { borderColor: t.border, borderWidth: t.borderW }]}>
-        <CameraView
-          ref={cameraRef}
-          style={StyleSheet.absoluteFill}
-          facing="back"
-          pictureSize={pictureSize}
-          onCameraReady={onCameraReady}
-        />
+        <View style={[StyleSheet.absoluteFill, styles.demoThumb]}>
+          <Icon name={demo ? 'eye' : 'camera'} size={26} color={t.textFaint} sw={1.8} />
+        </View>
       </View>
       <View style={styles.cameraStatusInfo}>
         <View style={styles.cameraStatusLabelRow}>
           <View style={[styles.statusDot, { backgroundColor: cfg.c }]} />
           <Text style={[styles.cameraStatusText, { color: cfg.c }]}>{cfg.label}</Text>
         </View>
-        {playing && status !== 'connected' ? (
+        {demo ? (
+          <Text style={[styles.cameraStatusHint, { color: t.textFaint }]}>
+            데모 모드 · demo.mp4 사전 녹화 영상 기반 (카메라 미사용)
+          </Text>
+        ) : playing && status !== 'connected' ? (
           <Text style={[styles.cameraStatusHint, { color: t.textFaint }]}>
             같은 Wi-Fi에 연결돼 있는지, AI 서버가 켜져 있는지 확인해주세요
           </Text>
@@ -141,7 +143,7 @@ function CameraStatusRow({ cameraRef, onCameraReady, pictureSize, status, playin
   );
 }
 
-export function WalkScreen({ playing, setPlaying, big, guidance }: { playing: boolean; setPlaying: (f: (p: boolean) => boolean | boolean) => void; big?: boolean; guidance?: GuidanceMessage | null }) {
+export function WalkScreen({ playing, setPlaying, big, guidance, demoMode }: { playing: boolean; setPlaying: (f: (p: boolean) => boolean | boolean) => void; big?: boolean; guidance?: GuidanceMessage | null; demoMode: boolean }) {
   const t = useTheme();
   const setAmbient = useAmbient();
   const [scene, setScene] = useState<Scene>(DEFAULT_SCENE);
@@ -155,7 +157,12 @@ export function WalkScreen({ playing, setPlaying, big, guidance }: { playing: bo
   // 저장이 끝나 누적값이 리셋되기 전까지는 "다시 시작"으로 재개할 수 없게 잠근다
   // (레이스: completeWalk() 네트워크 요청이 끝나기 전에 버튼을 눌러 이전 구간 값 위에 새 보행이 겹쳐 쌓이는 것 방지)
   const [ending, setEnding] = useState(false);
-  const { cameraRef, onCameraReady, pictureSize, status: aiStatus, detection } = useLiveDetection(playing);
+  // 데모 모드일 때는 라이브 카메라 훅을 비활성화(enabled=false)만 시켜둔다 — 코드는 그대로 남기고
+  // 카메라/WS 연결만 켜지지 않게 해서, demoMode를 끄면 원래 라이브 흐름이 그대로 복원된다.
+  const { cameraRef, onCameraReady, pictureSize, status: liveStatus, detection: liveDetection } = useLiveDetection(!demoMode && playing);
+  const { status: demoStatus, detection: demoDetection } = useDemoDetection(demoMode && playing);
+  const aiStatus = demoMode ? demoStatus : liveStatus;
+  const detection = demoMode ? demoDetection : liveDetection;
 
   // 보행이 처음 시작되는 시점의 시각을 기록
   useEffect(() => {
@@ -225,10 +232,17 @@ export function WalkScreen({ playing, setPlaying, big, guidance }: { playing: bo
     <View style={styles.container}>
       <ModeHeader title="일반보행" icon="walk" right={<StatusPill level={scene.level} large />} />
 
-      <CameraStatusRow cameraRef={cameraRef} onCameraReady={onCameraReady} pictureSize={pictureSize} status={aiStatus} playing={playing} />
+      <CameraStatusRow status={aiStatus} playing={playing} demo={demoMode} />
 
       <View>
-        <SceneView objects={scene.objects} height={300} scanning={playing && aiStatus === 'connected'} />
+        <SceneView
+          objects={scene.objects}
+          height={300}
+          scanning={playing && aiStatus === 'connected'}
+          background={demoMode
+            ? <DemoVideoFeed />
+            : <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" pictureSize={pictureSize} onCameraReady={onCameraReady} />}
+        />
         <HapticFlash show={haptic} />
       </View>
 
@@ -267,6 +281,7 @@ const styles = StyleSheet.create({
   container: { padding: 18, paddingTop: 4, gap: 14 },
   cameraRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   cameraThumb: { width: 72, height: 96, borderRadius: 14, overflow: 'hidden', backgroundColor: '#000' },
+  demoThumb: { alignItems: 'center', justifyContent: 'center' },
   cameraStatusInfo: { flex: 1, gap: 4 },
   cameraStatusLabelRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   statusDot: { width: 8, height: 8, borderRadius: 999 },

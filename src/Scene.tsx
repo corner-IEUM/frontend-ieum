@@ -28,7 +28,7 @@ function RippleRing({ color }: { color: string }) {
   );
 }
 
-export function SceneView({ objects, height = 300, scanning }: { objects: SceneObj[]; height?: number; scanning?: boolean }) {
+export function SceneView({ objects, height = 300, scanning, background }: { objects: SceneObj[]; height?: number; scanning?: boolean; background?: React.ReactNode }) {
   const t = useTheme();
   const H = height;
   const cx = W / 2, cy = H - 6;
@@ -38,7 +38,10 @@ export function SceneView({ objects, height = 300, scanning }: { objects: SceneO
     const r = rPix(d), ang = b * 0.92;
     return { x: cx + Math.sin(ang) * r * 0.92, y: cy - Math.cos(ang) * r };
   };
-  const ringColor = isC ? 'rgba(0,0,0,0.35)' : withAlpha(t.primary, 0.4);
+  // 카메라/데모 영상 위에 얹을 때는 어두운 스크림 위라 밝은 색 계열이, 기존 밝은 그라디언트
+  // 위일 때는 primary 톤이 더 잘 읽힌다
+  const ringColor = background ? 'rgba(255,255,255,0.55)' : isC ? 'rgba(0,0,0,0.35)' : withAlpha(t.primary, 0.4);
+  const ringLabelColor = background ? 'rgba(255,255,255,0.75)' : isC ? 'rgba(0,0,0,0.55)' : t.textFaint;
 
   // sweep rotation
   const rot = useRef(new Animated.Value(0)).current;
@@ -54,8 +57,15 @@ export function SceneView({ objects, height = 300, scanning }: { objects: SceneO
   const spin = rot.interpolate({ inputRange: [0, 1], outputRange: ['-56deg', '56deg'] });
 
   return (
-    <View style={{ width: '100%', height: H, borderRadius: t.radius, overflow: 'hidden', borderWidth: t.borderW, borderColor: t.border }}>
-      <LinearGradient colors={isC ? ['#ffffff', '#ffffff'] : ['#e7eefa', '#f4f7fc']} start={{ x: 0.5, y: 1 }} end={{ x: 0.5, y: 0 }} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+    <View style={{ width: '100%', height: H, borderRadius: t.radius, overflow: 'hidden', borderWidth: t.borderW, borderColor: t.border, backgroundColor: '#000' }}>
+      {background}
+      {/* 카메라/데모 영상 위에서도 레이더 선·마커가 잘 보이도록 어둡게 스크림 처리 —
+          background가 없을 때(연결 전 등)는 기존처럼 밝은 그라디언트만 보인다 */}
+      {background ? (
+        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(10,16,30,0.38)' }} />
+      ) : (
+        <LinearGradient colors={isC ? ['#ffffff', '#ffffff'] : ['#e7eefa', '#f4f7fc']} start={{ x: 0.5, y: 1 }} end={{ x: 0.5, y: 0 }} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
+      )}
 
       {/* rings + markers */}
       <Svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ position: 'absolute', alignSelf: 'center' }}>
@@ -64,7 +74,7 @@ export function SceneView({ objects, height = 300, scanning }: { objects: SceneO
           return (
             <React.Fragment key={d}>
               <Path d={`M ${cx - r * 0.92} ${cy} A ${r * 0.92} ${r} 0 0 1 ${cx + r * 0.92} ${cy}`} fill="none" stroke={ringColor} strokeWidth={isC ? 1.5 : 1} strokeDasharray={d === 3 ? '2 6' : undefined} />
-              <SvgText x={cx + r * 0.92 - 2} y={cy - 6} textAnchor="end" fontSize={11} fill={isC ? 'rgba(0,0,0,0.55)' : t.textFaint}>{d}m</SvgText>
+              <SvgText x={cx + r * 0.92 - 2} y={cy - 6} textAnchor="end" fontSize={11} fill={ringLabelColor}>{d}m</SvgText>
             </React.Fragment>
           );
         })}

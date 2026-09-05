@@ -5,7 +5,8 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { Icon, IconName } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
-import { ModeHeader } from '../ui';
+import { ModeHeader, Segmented } from '../ui';
+import { DemoVideoFeed } from '../DemoVideoFeed';
 
 export type CameraTarget = 'walk';
 
@@ -32,7 +33,13 @@ function ScanPulse({ color }: { color: string }) {
   );
 }
 
-export function CameraGateScreen({ target, onScanned, onCancel }: { target: CameraTarget; onScanned: () => void; onCancel: () => void }) {
+export function CameraGateScreen({ target, onScanned, onCancel, demoMode, onDemoModeChange }: {
+  target: CameraTarget;
+  onScanned: () => void;
+  onCancel: () => void;
+  demoMode: boolean;
+  onDemoModeChange: (demo: boolean) => void;
+}) {
   const t = useTheme();
   const [permission, requestPermission] = useCameraPermissions();
   const [scanning, setScanning] = useState(false);
@@ -44,10 +51,22 @@ export function CameraGateScreen({ target, onScanned, onCancel }: { target: Came
     return () => clearTimeout(id);
   };
 
-  if (!permission || !permission.granted) {
+  const modeToggle = (
+    <View style={styles.modeToggleWrap}>
+      <Segmented
+        value={demoMode ? 'demo' : 'live'}
+        onChange={(v) => onDemoModeChange(v === 'demo')}
+        options={[{ v: 'live', l: '실시간 인식' }, { v: 'demo', l: '데모 영상' }]}
+      />
+    </View>
+  );
+
+  // 데모 모드는 카메라를 전혀 쓰지 않으므로 카메라 권한 없이도 바로 진행할 수 있다
+  if (!demoMode && (!permission || !permission.granted)) {
     return (
       <View style={styles.permContainer}>
         <ModeHeader title={copy.title} icon={copy.icon} onBack={onCancel} />
+        {modeToggle}
         <View style={styles.permBody}>
           <View style={[styles.permIconCircle, { backgroundColor: withAlpha(t.primary, 0.16), borderWidth: t.borderW, borderColor: t.primary }]}>
             <Icon name="camera" size={34} color={t.primary} sw={2} />
@@ -67,9 +86,10 @@ export function CameraGateScreen({ target, onScanned, onCancel }: { target: Came
       <View style={styles.headerRow}>
         <ModeHeader title={copy.title} icon={copy.icon} onBack={onCancel} />
       </View>
+      {modeToggle}
 
       <View style={[styles.cameraBox, { borderRadius: t.radius, borderWidth: t.borderW, borderColor: t.border }]}>
-        <CameraView style={styles.cameraView} facing="back" />
+        {demoMode ? <DemoVideoFeed /> : <CameraView style={styles.cameraView} facing="back" />}
 
         {scanning ? (
           <View pointerEvents="none" style={styles.scanOverlay}>
@@ -106,6 +126,7 @@ const styles = StyleSheet.create({
   permButtonText: { fontWeight: '800', fontSize: 16 },
   container: { flex: 1, paddingTop: 4 },
   headerRow: { paddingHorizontal: 18 },
+  modeToggleWrap: { paddingHorizontal: 18, paddingTop: 4 },
   cameraBox: { flex: 1, margin: 18, overflow: 'hidden', backgroundColor: '#000' },
   cameraView: { flex: 1 },
   scanOverlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.28)' },

@@ -1,9 +1,28 @@
 // api.ts -API 공통 설정 및 토큰 관리
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export const API_BASE_URL = "http://192.168.200.115:8080";
+// EXPO_PUBLIC_ 접두사 변수는 번들 시점에 process.env로 심어짐 — 값이 없으면 로컬 개발용 IP로 폴백
+export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://192.168.200.115:8080";
 // AI 서버(FastAPI, YOLO 추론)는 백엔드와 별도 프로세스/포트 — 로컬 IP는 백엔드와 동일 머신 기준
-export const AI_SERVER_WS_URL = "ws://192.168.200.115:8000/ws/detect/live";
+export const AI_SERVER_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_WS_URL ?? "ws://192.168.200.115:8000/ws/detect/live";
+
+// 데모 모드(/ws/detect, /media/demo.mp4)용 주소는 AI_SERVER_WS_URL과 호스트:포트가 항상 같다.
+// 예전엔 이 둘을 별도의 하드코딩된 IP로 폴백시켰는데, update-ip.sh는 EXPO_PUBLIC_AI_SERVER_WS_URL만
+// 갱신하고 이 둘은 모르기 때문에 PC의 IP가 바뀔 때마다 여기만 옛날 IP로 남아 조용히 깨지는 문제가
+// 있었다 — AI_SERVER_WS_URL에서 host:port만 뽑아 재사용해서 같은 실수가 다시 안 생기게 한다.
+const AI_SERVER_HOST_PORT = AI_SERVER_WS_URL.replace(/^wss?:\/\//, "").split("/")[0];
+// 데모 모드용: AI 서버가 자체적으로 사전 녹화 영상(config.VIDEO_SOURCE, 기본 data/demo.mp4)을
+// 읽어 감지 결과를 push하는 경로. 클라이언트는 프레임을 보낼 필요 없이 연결만 하면 된다.
+export const AI_SERVER_DEMO_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_DEMO_WS_URL ?? `ws://${AI_SERVER_HOST_PORT}/ws/detect`;
+// AI 서버가 정적 파일로도 내려주는 데모 영상(ai/server.py의 /media 마운트) — 화면에 실제로
+// 재생되는 모습을 보여주기 위한 HTTP(스트리밍) 주소.
+export const DEMO_VIDEO_URL = process.env.EXPO_PUBLIC_DEMO_VIDEO_URL ?? `http://${AI_SERVER_HOST_PORT}/media/demo.mp4`;
+
+// 일반보행 화면의 인식 모드 초기값 — 사용자가 화면의 토글로 언제든 바꿀 수 있지만, 앱을 처음
+// 열었을 때 무엇으로 시작할지는 이 값을 따른다. EXPO_PUBLIC_DEMO_MODE로 오버라이드 가능.
+export const DEFAULT_DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE
+  ? process.env.EXPO_PUBLIC_DEMO_MODE === 'true'
+  : true;
 
 const TOKEN_KEY = "accessToken";
 
