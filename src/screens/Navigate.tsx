@@ -334,8 +334,10 @@ export function NavigateScreen({
     speakWithPriority(step.text, urgent);
   }, [i, journey]);
 
-  // 경로 좌표(폴리라인) — route가 바뀔 때만 다시 파싱
+  // 경로 좌표(폴리라인) — route가 바뀔 때만 다시 파싱. [lng, lat] 순서(GeoJSON 표준)
   const routePath = useMemo(() => (route ? extractPath(route.routeData) : []), [route]);
+  // KakaoMap에 넘길 형태({lat, lng})로 변환 — routePath가 바뀔 때만(=route가 바뀔 때만) 다시 계산
+  const kakaoRoutePath = useMemo(() => routePath.map(([lng, lat]) => ({ lat, lng })), [routePath]);
   const offTrackStreakRef = useRef(0); // 연속으로 threshold를 넘은 횟수 (디바운스용)
   const deviationConfirmedRef = useRef(false); // 이탈을 이미 보고했는지 (재탐색 화면 전환 대기 중 중복 트리거 방지)
 
@@ -421,7 +423,7 @@ export function NavigateScreen({
       {/* MiniMap(하드코딩 SVG placeholder) 대신 실제 카카오맵으로 표시.
           currentLocation이 아직 없으면(GPS 최초 fix 전) 지도를 그릴 좌표가 없으므로 로딩 표시 */}
       {currentLocation ? (
-        <KakaoMap latitude={currentLocation.latitude} longitude={currentLocation.longitude} height={132} />
+        <KakaoMap latitude={currentLocation.latitude} longitude={currentLocation.longitude} height={132} routePath={kakaoRoutePath} />
       ) : (
         <View style={[styles.miniMap, { alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface2 }]}>
           <ActivityIndicator color={t.textFaint} />
