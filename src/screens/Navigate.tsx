@@ -7,10 +7,21 @@ import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level, Theme } from '../theme';
 import { ModeHeader, CaptionBar, Card, ctrlStyle, GuidanceBanner } from '../ui';
 import { SceneView, HapticFlash, SceneObj } from '../Scene';
+import { KakaoMap } from '../KakaoMap';
 import { Place, RouteResponse } from '../api';
 import { formatDistance, formatDuration } from './RouteCandidates';
-import { parseRouteSteps } from '../routeParser';
+import { parseRouteSteps, extractPath, distanceToRouteMeters, RouteStep, WaypointCategory } from '../routeParser';
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
+import { Coords } from '../hooks/useLocationTracking';
+import { speakWithPriority } from '../tts';
+
+// 경로 이탈 판단 기준(m). 스마트폰 GPS는 개활지에서도 오차가 5~15m 정도 나서, 그보다 낮게
+// 잡으면 정상 보행 중에도 오탐이 잦다 — 보행 내비게이션에서 통상 쓰는 20~30m대 중간값으로 설정
+const DEVIATION_THRESHOLD_M = 25;
+// 위치가 threshold를 몇 번 연속으로 넘어야 "진짜 이탈"로 확정할지.
+// useLocationTracking이 대략 2~3초/3m 간격으로 갱신되므로 3회 연속(약 6~9초)이면 GPS 튐 한두 번으로는
+// 오탐하지 않으면서도 실제 이탈은 충분히 빨리 잡아낼 수 있음
+const DEVIATION_CONFIRM_COUNT = 3;
 
 // ───────── legs ─────────
 const LEGS = [
@@ -30,6 +41,7 @@ interface JourneyStep {
   sub: string;
   around?: AroundItem[];
   transit?: TransitStep;
+  category?: WaypointCategory; // 실제 경로(waypoint) 스텝에만 존재 — 목업 데모에는 없음(TTS 트리거 구분용)
 }
 
 const JOURNEY: JourneyStep[] = [
@@ -49,7 +61,32 @@ const JOURNEY: JourneyStep[] = [
   { leg: 'walk2', mode: 'arrive', level: 'safe', turn: '도착', text: '목적지에 도착했습니다', sub: '성수역 2번 출구입니다', around: [] },
 ];
 
-const CAT_COLOR = (t: Theme, cat: string): string => (({ 안전: t.status.safe.fg, 교통: t.primary, 상점: t.status.caution.fg, 주의: t.status.caution.fg, 시설: t.textDim } as Record<string, string>)[cat] || t.textDim);
+const CAT_COLOR = (t: Theme, cat: string): string => (({ 안전: t.status.safe.fg, 교통: t.primary, 상점: t.status.caution.fg, 주의: t.status.caution.fg, 시설: t.textDim, 위험: t.status.danger.fg } as Record<string, string>)[cat] || t.textDim);
+// AroundPanel 배지에 쓰는 cat 라벨(위험/주의/안전/시설)로 SceneView 마커 레벨도 함께 판단
+const CAT_LEVEL: Record<string, Level> = { 위험: 'danger', 주의: 'caution' };
+
+// ───────── 실제 경로 waypoint(STAIR/CROSSWALK/TURN) -> around 마커 변환 ─────────
+// 백엔드 WaypointCategory와 동일한 3분류를 그대로 마커 아이콘/색으로 매핑.
+// TURN은 티맵 문구에 좌회전/우회전 키워드가 있으면 그 방향 아이콘을, 없으면(직진 등) 직진 화살표를 씀
+const CATEGORY_ICON: Record<WaypointCategory, IconName> = { STAIR: 'stairs', CROSSWALK: 'cross', TURN: 'arrowUp' };
+const CATEGORY_CAT_LABEL: Record<WaypointCategory, string> = { STAIR: '위험', CROSSWALK: '안전', TURN: '시설' };
+
+function turnIcon(text: string): IconName {
+  if (text.includes('좌회전')) return 'chevronL';
+  if (text.includes('우회전')) return 'chevron';
+  return 'arrowUp';
+}
+function turnBearingLabel(text: string): string {
+  if (text.includes('좌회전')) return '왼쪽';
+  if (text.includes('우회전')) return '오른쪽';
+  return '정면';
+}
+
+function aroundItemForStep(s: RouteStep): AroundItem {
+  const icon = s.category === 'TURN' ? turnIcon(s.text) : CATEGORY_ICON[s.category];
+  const bearing = s.category === 'TURN' ? turnBearingLabel(s.text) : '정면';
+  return { icon, name: s.text, bearing, dist: `${s.distToNext ?? 0}m`, cat: CATEGORY_CAT_LABEL[s.category] };
+}
 
 // ───────── leg progress bar ─────────
 function LegBar({ currentLeg }: { currentLeg: string }) {
@@ -77,7 +114,10 @@ function LegBar({ currentLeg }: { currentLeg: string }) {
   );
 }
 
-// ───────── mini map ─────────
+// ───────── mini map (하드코딩 SVG placeholder) ─────────
+// 실제 렌더링에는 더 이상 쓰이지 않음(KakaoMap.tsx로 교체됨) — 삭제하지 말라는 요청에 따라
+// 원본 그대로 남겨둠. 카카오맵 로딩 실패 등 롤백이 필요하면 아래 <KakaoMap .../> 자리에
+// <MiniMap progress={...} />로 다시 바꿔 끼우면 됨.
 function MiniMap({ progress }: { progress: number }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
@@ -246,11 +286,12 @@ function ArrivePanel() {
 // ───────── main screen ─────────
 export function NavigateScreen({
   playing, big, onBack, origin, destination, route, guidance, onSearchOrigin, onSearchDestination,
-  onComplete, completing, completed, completeError,
+  onComplete, completing, completed, completeError, currentLocation, onDeviated,
 }: {
   playing?: boolean; big?: boolean; onBack?: () => void; origin?: Place | null; destination?: Place | null;
   route?: RouteResponse | null; guidance?: GuidanceMessage | null; onSearchOrigin?: () => void; onSearchDestination?: () => void;
   onComplete?: () => void; completing?: boolean; completed?: boolean; completeError?: string | null;
+  currentLocation?: Coords | null; onDeviated?: () => void; // 경로 이탈 확정 시 호출 — 부모가 재탐색(후보 화면 전환)을 담당
 }) {
   const t = useTheme();
   const setAmbient = useAmbient();
@@ -262,7 +303,10 @@ export function NavigateScreen({
   // route가 있으면 실제 티맵 턴바이턴 안내로, 없으면 목업(버스 탑승 포함) 시연 데이터로 진행
   const journey: JourneyStep[] = useMemo(() => {
     if (!route) return JOURNEY;
-    const steps = parseRouteSteps(route.routeData).map((s): JourneyStep => ({ leg: 'walk1', mode: 'walk', level: s.level, text: s.text, sub: s.sub, around: [] }));
+    const steps = parseRouteSteps(route.routeData).map((s): JourneyStep => ({
+      leg: 'walk1', mode: 'walk', level: s.level, text: s.text, sub: s.sub,
+      category: s.category, around: [aroundItemForStep(s)],
+    }));
     steps.push({ leg: 'walk1', mode: 'arrive', level: 'safe', turn: '도착', text: '목적지에 도착했습니다', sub: destination?.placeName ?? '', around: [] });
     return steps;
   }, [route, destination]);
@@ -282,11 +326,53 @@ export function NavigateScreen({
   }, [i, journey]);
   useEffect(() => { setAmbient(off ? 'danger' : step.level); }, [off]);
 
-  const deviate = () => { setOff(true); Vibration.vibrate([0, 250, 80, 250]); setTimeout(() => setOff(false), 1700); };
+  // 실제 경로 웨이포인트 안내 TTS — 계단/횡단보도(STAIR/CROSSWALK)는 기존 발화를 끊고 즉시,
+  // 일반 회전/직진 안내(TURN)는 낮은 우선순위로 재생 (목업 데모 스텝엔 category가 없어 대상에서 제외)
+  useEffect(() => {
+    if (!step.category) return;
+    const urgent = step.category === 'STAIR' || step.category === 'CROSSWALK';
+    speakWithPriority(step.text, urgent);
+  }, [i, journey]);
+
+  // 경로 좌표(폴리라인) — route가 바뀔 때만 다시 파싱
+  const routePath = useMemo(() => (route ? extractPath(route.routeData) : []), [route]);
+  const offTrackStreakRef = useRef(0); // 연속으로 threshold를 넘은 횟수 (디바운스용)
+  const deviationConfirmedRef = useRef(false); // 이탈을 이미 보고했는지 (재탐색 화면 전환 대기 중 중복 트리거 방지)
+
+  // 새 경로가 적용되면 이탈 판단 상태 초기화
+  useEffect(() => {
+    offTrackStreakRef.current = 0;
+    deviationConfirmedRef.current = false;
+  }, [route]);
+
+  // 이탈 확정 처리 — 기존 UI(진동/경고 표시) 재사용 + TTS 안내 + 부모에게 재탐색 요청
+  const confirmDeviation = () => {
+    if (deviationConfirmedRef.current) return;
+    deviationConfirmedRef.current = true;
+    setOff(true);
+    Vibration.vibrate([0, 250, 80, 250]);
+    speakWithPriority('경로를 이탈했습니다. 새 경로를 찾습니다', true);
+    onDeviated?.();
+  };
+
+  // 현재 위치가 갱신될 때마다 경로와의 최단거리를 확인 — threshold를 DEVIATION_CONFIRM_COUNT회
+  // 연속으로 넘어야 이탈로 확정 (GPS가 한두 번 튀는 것만으로 오탐하지 않도록)
+  useEffect(() => {
+    if (!route || !currentLocation || routePath.length < 2 || deviationConfirmedRef.current) return;
+    const point: [number, number] = [currentLocation.longitude, currentLocation.latitude];
+    const dist = distanceToRouteMeters(point, routePath);
+    if (dist > DEVIATION_THRESHOLD_M) {
+      offTrackStreakRef.current += 1;
+      if (offTrackStreakRef.current >= DEVIATION_CONFIRM_COUNT) confirmDeviation();
+    } else {
+      offTrackStreakRef.current = 0;
+      setOff(false);
+    }
+  }, [currentLocation, route, routePath]);
 
   const sceneObjects: SceneObj[] = (step.around || []).map((a, k) => ({
     id: 'a' + k, icon: a.icon, label: a.name, dist: parseFloat(a.dist) || 3,
-    bearing: (k - ((step.around!.length - 1) / 2)) * 0.5, level: a.cat === '주의' ? 'caution' : 'safe',
+    bearing: (k - ((step.around!.length - 1) / 2)) * 0.5, level: CAT_LEVEL[a.cat] ?? 'safe',
   }));
 
   return (
@@ -332,7 +418,15 @@ export function NavigateScreen({
         </View>
       ) : (
       <>
-      <MiniMap progress={journey.length > 1 ? i / (journey.length - 1) : 1} />
+      {/* MiniMap(하드코딩 SVG placeholder) 대신 실제 카카오맵으로 표시.
+          currentLocation이 아직 없으면(GPS 최초 fix 전) 지도를 그릴 좌표가 없으므로 로딩 표시 */}
+      {currentLocation ? (
+        <KakaoMap latitude={currentLocation.latitude} longitude={currentLocation.longitude} height={132} />
+      ) : (
+        <View style={[styles.miniMap, { alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface2 }]}>
+          <ActivityIndicator color={t.textFaint} />
+        </View>
+      )}
 
       {step.mode === 'transit'
         ? <TransitVisual step={step.transit!} sending={sending} t={t} />
@@ -374,9 +468,11 @@ export function NavigateScreen({
 
       {completeError ? <Text style={[styles.completeErrorText, { color: t.status.danger.fg }]}>{completeError}</Text> : null}
 
-      <TouchableOpacity onPress={deviate} style={[ctrlStyle(t), styles.deviateButtonInner, { borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
+      {/* 실내 등 GPS가 잘 안 잡히는 환경에서 이탈 감지~재탐색 파이프라인 전체를 수동으로 확인할 수 있는 테스트 버튼.
+          confirmDeviation()을 실제 GPS 판정과 동일하게 호출하므로 연출이 아니라 진짜 이탈 처리가 실행됨 */}
+      <TouchableOpacity onPress={confirmDeviation} style={[ctrlStyle(t), styles.deviateButtonInner, { borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
         <Icon name="alert" size={18} color={t.status.danger.fg} sw={2.2} />
-        <Text style={[styles.deviateText, { color: t.status.danger.fg }]}>경로 이탈 경고 시연</Text>
+        <Text style={[styles.deviateText, { color: t.status.danger.fg }]}>경로 이탈 감지 테스트</Text>
       </TouchableOpacity>
 
       <HapticFlash show={danger} />
