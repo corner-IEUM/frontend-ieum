@@ -15,11 +15,12 @@ import { CameraGateScreen } from './src/screens/CameraGate';
 import { PlaceSearchScreen } from './src/screens/PlaceSearch';
 import { RouteCandidatesScreen } from './src/screens/RouteCandidates';
 import { WalkLogHistoryScreen } from './src/screens/WalkLogHistory';
+import { NavigationHistoryScreen } from './src/screens/NavigationHistory';
 import { Place, RouteCandidate, RouteResponse, searchRouteCandidates, createRoute, checkNearbyHazards, completeNavigation, AuthExpiredError, getToken, getMyInfo, DEFAULT_DEMO_MODE } from './src/api';
 import { useLocationTracking } from './src/hooks/useLocationTracking';
 import { useGuidanceSocket } from './src/hooks/useGuidanceSocket';
 
-type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates' | 'walkLogHistory';
+type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates' | 'walkLogHistory' | 'navigationHistory';
 type UserInfo = { nickname: string; email: string };
 const TABS: { id: ScreenId; icon: IconName; label: string }[] = [
   { id: 'home', icon: 'home', label: '홈' },
@@ -299,6 +300,8 @@ function IeumApp() {
     ),
     // 이동경로 저장(보행 기록) 목록 화면
     walkLogHistory: <WalkLogHistoryScreen onBack={goHome} onAuthExpired={handleMaybeAuthExpired} />,
+    // 길찾기 기록 목록 화면
+    navigationHistory: <NavigationHistoryScreen onBack={goHome} onAuthExpired={handleMaybeAuthExpired} />,
   };
 
   return (

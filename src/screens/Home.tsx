@@ -90,6 +90,8 @@ export function HomeScreen({ go, showRec, setShowRec }: { go: (s: string) => voi
         <ModeButton icon="pin" title="길찾기" desc="경로 안내 · 주변 설명 · 대중교통 탑승까지" onPress={() => go('navigate')} />
         {/* 저장된 보행 기록(WalkLog) 목록 화면으로 이동하는 카드 */}
         <ModeButton icon="clock" title="이동경로 저장" desc="지난 보행 기록 · 이동거리 · 소요시간 확인" onPress={() => go('walkLogHistory')} />
+        {/* 저장된 길찾기 기록(Navigation) 목록 화면으로 이동하는 카드 */}
+        <ModeButton icon="clock" title="길찾기 기록" desc="지난 길찾기 경로 · 이동거리 · 소요시간 확인" onPress={() => go('navigationHistory')} />
       </View>
     </View>
   );

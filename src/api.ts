@@ -191,3 +191,27 @@ export async function getWalkLogs(): Promise<WalkLog[]> {
   if (!res.ok) throw new Error('보행 기록 조회에 실패했습니다');
   return res.json();
 }
+// 저장된 길찾기(Navigation) 기록 한 건 — 백엔드 NavigationHistoryResponse와 필드명 1:1 매칭
+// (place명은 저장되지 않고 좌표만 저장되므로 origin/destination 이름은 여기 없음 — 화면에서 좌표로 표시)
+export interface NavigationHistoryItem {
+  id: number;
+  startLng: number;
+  startLat: number;
+  endLng: number;
+  endLat: number;
+  distance: number; // m
+  duration: number; // s
+  obstacleCnt: number;
+  completed: boolean;
+  startTime: string;
+  endTime: string | null;
+  routeData: string; // 티맵 원본 경로 JSON
+}
+// 길찾기 기록(Navigation) 목록 조회 API 요청 함수 (JWT 인증 필요)
+// ※ 백엔드가 페이징 없이 유저의 전체 기록을 한 번에 반환함 — 기록이 많이 쌓이면
+//   응답이 커질 수 있으니, 추후 문제가 되면 페이징 파라미터 추가를 검토할 것
+export async function getNavigationHistory(): Promise<NavigationHistoryItem[]> {
+  const res = await authFetch('/api/navigation/history');
+  if (!res.ok) throw new Error('길찾기 기록 조회에 실패했습니다');
+  return res.json();
+}
