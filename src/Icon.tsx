@@ -7,7 +7,7 @@ export type IconName =
   | 'traffic' | 'pin' | 'mic' | 'alert' | 'door' | 'stairs' | 'gap'
   | 'chevron' | 'chevronL' | 'arrowUp' | 'arrowR' | 'check' | 'x' | 'plus'
   | 'bike' | 'person' | 'home' | 'eye' | 'refresh' | 'cross' | 'bell'
-  | 'camera' | 'logout' | 'mail' | 'lock';
+  | 'camera' | 'logout' | 'mail' | 'lock' | 'clock';
 
 interface Props { name: IconName; size?: number; color?: string; sw?: number; }
 
@@ -48,6 +48,7 @@ export function Icon({ name, size = 28, color = '#fff', sw = 2 }: Props) {
       case 'logout': return <G><Path {...s} d="M9 4H6a2 2 0 00-2 2v12a2 2 0 002 2h3M15 16l4-4-4-4M19 12H9" /></G>;
       case 'mail': return <G><Rect x={4} y={6} width={16} height={12} {...s} /><Path {...s} d="M4 7l8 6 8-6" /></G>;
       case 'lock': return <G><Rect x={6} y={10.5} width={12} height={9} rx={2} {...s} /><Path {...s} d="M8.5 10.5V8a3.5 3.5 0 017 0v2.5" /></G>;
+      case 'clock': return <G><Circle cx={12} cy={12} r={9} {...s} /><Path {...s} d="M12 7v5l3.5 2" /></G>;
       default: return null;
     }
   })();

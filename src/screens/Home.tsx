@@ -88,6 +88,8 @@ export function HomeScreen({ go, showRec, setShowRec }: { go: (s: string) => voi
       <View style={styles.modesWrap}>
         <ModeButton icon="walk" title="일반보행" desc="동적 장애물 · 신호등 · 거리 경고" onPress={() => go('walk')} />
         <ModeButton icon="pin" title="길찾기" desc="경로 안내 · 주변 설명 · 대중교통 탑승까지" onPress={() => go('navigate')} />
+        {/* 저장된 보행 기록(WalkLog) 목록 화면으로 이동하는 카드 */}
+        <ModeButton icon="clock" title="이동경로 저장" desc="지난 보행 기록 · 이동거리 · 소요시간 확인" onPress={() => go('walkLogHistory')} />
       </View>
     </View>
   );
