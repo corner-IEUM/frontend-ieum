@@ -6,12 +6,15 @@ import * as Speech from 'expo-speech';
 
 export async function speakWithPriority(text: string, urgent: boolean) {
   try {
+    const speaking = await Speech.isSpeakingAsync();
     if (urgent) {
-      await Speech.stop();
+      // 말하는 중이 아닐 때도 습관적으로 stop()을 호출하면, 일부 기기에서 stop 직후 바로
+      // speak을 호출할 때 오디오 세션이 안정되기 전에 재생이 시작돼 초반부가 지지직거리는
+      // 문제가 있었다 — 실제로 끊어야 할 때(말하는 중일 때)만 stop 한다.
+      if (speaking) await Speech.stop();
       Speech.speak(text, { language: 'ko-KR' });
       return;
     }
-    const speaking = await Speech.isSpeakingAsync();
     if (speaking) return;
     Speech.speak(text, { language: 'ko-KR' });
   } catch {

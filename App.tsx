@@ -135,7 +135,7 @@ function IeumApp() {
   const [playing, setPlaying] = useState(true);
   const [ambient, setAmbient] = useState<Level | 'idle'>('idle');
   const [tweaksOpen, setTweaksOpen] = useState(false);
-  const { location: currentLocation } = useLocationTracking(true);
+  const { location: currentLocation, errorMsg: locationError } = useLocationTracking(true);
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
   const [searchTarget, setSearchTarget] = useState<'origin' | 'destination'>('destination');
@@ -254,6 +254,7 @@ function IeumApp() {
         route={activeRoute}
         guidance={guidance}
         currentLocation={currentLocation}
+        locationError={locationError}
         onDeviated={handleDeviated}
         onSearchOrigin={() => { setSearchTarget('origin'); setScreen('placeSearch'); }}
         onSearchDestination={() => { setSearchTarget('destination'); setScreen('placeSearch'); }}

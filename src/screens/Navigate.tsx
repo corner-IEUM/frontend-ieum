@@ -10,7 +10,7 @@ import { SceneView, HapticFlash, SceneObj } from '../Scene';
 import { KakaoMap } from '../KakaoMap';
 import { Place, RouteResponse } from '../api';
 import { formatDistance, formatDuration } from './RouteCandidates';
-import { parseRouteSteps, extractPath, distanceToRouteMeters, RouteStep, WaypointCategory } from '../routeParser';
+import { parseRouteSteps, extractPath, distanceToRouteMeters, distanceMeters, RouteStep, WaypointCategory } from '../routeParser';
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 import { Coords } from '../hooks/useLocationTracking';
 import { speakWithPriority } from '../tts';
@@ -22,6 +22,10 @@ const DEVIATION_THRESHOLD_M = 25;
 // useLocationTracking이 대략 2~3초/3m 간격으로 갱신되므로 3회 연속(약 6~9초)이면 GPS 튐 한두 번으로는
 // 오탐하지 않으면서도 실제 이탈은 충분히 빨리 잡아낼 수 있음
 const DEVIATION_CONFIRM_COUNT = 3;
+// 다음 스텝 좌표에 이 거리(m) 이내로 들어오면 "도착"으로 보고 자동으로 다음 안내로 넘어간다.
+// 이탈 판단(25m)보다 좁게 잡는 이유: 저건 "경로에서 얼마나 벗어났나"(옆으로 크게 벗어나야 오탐)이고
+// 이건 "이 지점에 도달했나"라 더 좁아야 아직 멀리 있는데 다음 안내로 성급하게 넘어가지 않음
+const ARRIVAL_THRESHOLD_M = 15;
 
 // ───────── legs ─────────
 const LEGS = [
@@ -42,6 +46,8 @@ interface JourneyStep {
   around?: AroundItem[];
   transit?: TransitStep;
   category?: WaypointCategory; // 실제 경로(waypoint) 스텝에만 존재 — 목업 데모에는 없음(TTS 트리거 구분용)
+  lng?: number; // 실제 경로 스텝에만 존재 — GPS 자동 진행 판단용(목업 데모는 좌표가 없어 자동 진행 대상에서 제외)
+  lat?: number;
 }
 
 const JOURNEY: JourneyStep[] = [
@@ -286,12 +292,12 @@ function ArrivePanel() {
 // ───────── main screen ─────────
 export function NavigateScreen({
   playing, big, onBack, origin, destination, route, guidance, onSearchOrigin, onSearchDestination,
-  onComplete, completing, completed, completeError, currentLocation, onDeviated,
+  onComplete, completing, completed, completeError, currentLocation, locationError, onDeviated,
 }: {
   playing?: boolean; big?: boolean; onBack?: () => void; origin?: Place | null; destination?: Place | null;
   route?: RouteResponse | null; guidance?: GuidanceMessage | null; onSearchOrigin?: () => void; onSearchDestination?: () => void;
   onComplete?: () => void; completing?: boolean; completed?: boolean; completeError?: string | null;
-  currentLocation?: Coords | null; onDeviated?: () => void; // 경로 이탈 확정 시 호출 — 부모가 재탐색(후보 화면 전환)을 담당
+  currentLocation?: Coords | null; locationError?: string | null; onDeviated?: () => void; // 경로 이탈 확정 시 호출 — 부모가 재탐색(후보 화면 전환)을 담당
 }) {
   const t = useTheme();
   const setAmbient = useAmbient();
@@ -305,7 +311,7 @@ export function NavigateScreen({
     if (!route) return JOURNEY;
     const steps = parseRouteSteps(route.routeData).map((s): JourneyStep => ({
       leg: 'walk1', mode: 'walk', level: s.level, text: s.text, sub: s.sub,
-      category: s.category, around: [aroundItemForStep(s)],
+      category: s.category, around: [aroundItemForStep(s)], lng: s.lng, lat: s.lat,
     }));
     steps.push({ leg: 'walk1', mode: 'arrive', level: 'safe', turn: '도착', text: '목적지에 도착했습니다', sub: destination?.placeName ?? '', around: [] });
     return steps;
@@ -372,6 +378,18 @@ export function NavigateScreen({
     }
   }, [currentLocation, route, routePath]);
 
+  // 현재 위치가 다음 안내 지점 좌표에 충분히 가까워지면 자동으로 다음 안내로 넘어간다.
+  // 목업 데모 스텝(step.lng/lat 없음)은 대상에서 제외되고, 그때는 기존처럼 버튼으로만 넘어간다 —
+  // 버튼은 그대로 남겨둬서 실내 등 GPS가 안 잡히는 상황의 수동 대체 수단으로 계속 쓸 수 있다.
+  useEffect(() => {
+    if (!currentLocation || step.lng == null || step.lat == null || atEnd) return;
+    const point: [number, number] = [currentLocation.longitude, currentLocation.latitude];
+    const dist = distanceMeters(point, [step.lng, step.lat]);
+    if (dist <= ARRIVAL_THRESHOLD_M) {
+      setI((v) => Math.min(journey.length - 1, v + 1));
+    }
+  }, [currentLocation, step, atEnd, journey.length]);
+
   const sceneObjects: SceneObj[] = (step.around || []).map((a, k) => ({
     id: 'a' + k, icon: a.icon, label: a.name, dist: parseFloat(a.dist) || 3,
     bearing: (k - ((step.around!.length - 1) / 2)) * 0.5, level: CAT_LEVEL[a.cat] ?? 'safe',
@@ -425,8 +443,12 @@ export function NavigateScreen({
       {currentLocation ? (
         <KakaoMap latitude={currentLocation.latitude} longitude={currentLocation.longitude} height={132} routePath={kakaoRoutePath} />
       ) : (
-        <View style={[styles.miniMap, { alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface2 }]}>
-          <ActivityIndicator color={t.textFaint} />
+        <View style={[styles.miniMap, { alignItems: 'center', justifyContent: 'center', backgroundColor: t.surface2, gap: 8, padding: 12 }]}>
+          {locationError ? (
+            <Text style={[styles.locationErrorText, { color: t.status.danger.fg }]}>{locationError}</Text>
+          ) : (
+            <ActivityIndicator color={t.textFaint} />
+          )}
         </View>
       )}
 
@@ -543,6 +565,7 @@ const styles = StyleSheet.create({
   nextButtonText: { fontWeight: '800', fontSize: 16 },
   counterText: { fontSize: 13, fontWeight: '700', minWidth: 42, textAlign: 'right' },
   completeErrorText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
+  locationErrorText: { fontSize: 13, fontWeight: '700', textAlign: 'center' },
   deviateButtonInner: { gap: 8 },
   deviateText: { fontWeight: '800', fontSize: 14 },
 });

@@ -37,7 +37,11 @@ export interface DetectionMessage {
 export type LiveConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
 const RECONNECT_DELAY_MS = 2000;
-const CAPTURE_MIN_INTERVAL_MS = 200; // 캡처+전송 완료 후 다음 캡처까지 최소 대기 (겹침 방지)
+// 캡처+전송 완료 후 다음 캡처까지 최소 대기 (겹침 방지).
+// 200ms(약 5fps)로는 캡처 루프가 카메라/CPU를 쉬지 않고 점유해 TTS 음성 재생이 버벅이는 문제가
+// 있었다 — 서버가 같은 물체는 3초에 한 번만 알리므로(core/notifier.py NOTIFY_INTERVAL) 감지
+// 반응성 손해는 적으면서 폰 부하를 줄이기 위해 간격을 늘렸다.
+const CAPTURE_MIN_INTERVAL_MS = 500;
 const TARGET_PICTURE_SIZE = { width: 640, height: 480 };
 
 // 기기가 지원하는 pictureSize 목록 중 목표 해상도(640x480)에 가장 가까운 것 선택
@@ -66,6 +70,7 @@ export function useLiveDetection(enabled: boolean) {
   const wsRef = useRef<WebSocket | null>(null);
   const captureLoopActive = useRef(false);
   const cameraReadyRef = useRef(false);
+  const frameSentCount = useRef(0);
 
   const [status, setStatus] = useState<LiveConnectionStatus>('disconnected');
   const [detection, setDetection] = useState<DetectionMessage | null>(null);
@@ -96,10 +101,15 @@ export function useLiveDetection(enabled: boolean) {
       .then((photo) => {
         if (photo?.base64 && wsRef.current?.readyState === WebSocket.OPEN) {
           wsRef.current.send(photo.base64);
+          frameSentCount.current += 1;
+          if (frameSentCount.current === 1 || frameSentCount.current % 50 === 0) {
+            console.log('[실시간모드] 전송한 프레임 수:', frameSentCount.current);
+          }
         }
       })
-      .catch(() => {
-        // 캡처 실패(예: 화면 전환 중 언마운트)는 무시하고 다음 프레임 시도
+      .catch((err) => {
+        // 캡처 실패(예: 화면 전환 중 언마운트)는 대부분 무해하지만, 반복되면 원인 파악이 필요하므로 남긴다
+        console.warn('[실시간모드] 프레임 캡처 실패:', err?.message ?? err);
       })
       .finally(scheduleRetry);
   }, []);
@@ -113,6 +123,7 @@ export function useLiveDetection(enabled: boolean) {
   useEffect(() => {
     if (!enabled) {
       captureLoopActive.current = false;
+      frameSentCount.current = 0;
       wsRef.current?.close();
       wsRef.current = null;
       setStatus('disconnected');
@@ -126,11 +137,13 @@ export function useLiveDetection(enabled: boolean) {
     const connect = () => {
       if (cancelled) return;
       setStatus('connecting');
+      console.log('[실시간모드] WS 연결 시도:', AI_SERVER_WS_URL);
       const ws = new WebSocket(AI_SERVER_WS_URL);
       wsRef.current = ws;
 
       ws.onopen = () => {
         if (cancelled) return;
+        console.log('[실시간모드] WS 연결됨:', AI_SERVER_WS_URL);
         setStatus('connected');
         startCaptureLoop();
       };
@@ -138,17 +151,24 @@ export function useLiveDetection(enabled: boolean) {
         if (cancelled) return;
         try {
           const msg = JSON.parse(e.data);
-          if (msg.type === 'error') return; // 개별 프레임 에러는 무시하고 다음 프레임 계속
+          if (msg.type === 'error') { console.warn('[실시간모드] 서버 에러 메시지:', msg.message); return; } // 개별 프레임 에러는 무시하고 다음 프레임 계속
           setDetection(msg);
           announce(msg);
         } catch {
           // 파싱 실패한 메시지는 무시
         }
       };
-      ws.onerror = () => { if (!cancelled) setStatus('error'); };
-      ws.onclose = () => {
+      // RN WebSocket의 error 이벤트는 브라우저와 달리 종종 메시지를 담고 있음(예: 연결 거부/호스트 도달 불가) —
+      // 콘솔에 남겨야 "터널 주소가 틀렸다" 같은 원인을 실기기에서도 바로 알 수 있다
+      ws.onerror = (e) => {
+        if (cancelled) return;
+        console.error('[실시간모드] WS 연결 실패:', AI_SERVER_WS_URL, (e as any)?.message ?? e);
+        setStatus('error');
+      };
+      ws.onclose = (e) => {
         captureLoopActive.current = false;
         if (cancelled) return;
+        console.log('[실시간모드] WS 종료(재연결 예정):', AI_SERVER_WS_URL, 'code=', e.code, 'reason=', e.reason);
         setStatus('disconnected');
         reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS); // 자동 재연결
       };
