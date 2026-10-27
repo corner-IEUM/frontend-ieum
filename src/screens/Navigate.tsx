@@ -1,7 +1,6 @@
 // screens/Navigate.tsx — 길찾기 (통합 모드): 도보 → 버스 → 도보, 주변 설명 + 대중교통 탑승/하차 안내가 자동으로 끼어든다.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Animated, Easing, Vibration, StyleSheet, ActivityIndicator } from 'react-native';
-import Svg, { Path, Circle, Line } from 'react-native-svg';
 import { Icon, IconName } from '../Icon';
 import { useTheme, useAmbient } from '../theme-context';
 import { withAlpha, Level, Theme } from '../theme';
@@ -14,16 +13,17 @@ import { parseRouteSteps, extractPath, distanceToRouteMeters, RouteStep, Waypoin
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
 import { Coords } from '../hooks/useLocationTracking';
 import { speakWithPriority } from '../tts';
+import { useVoiceCommand } from '../hooks/useVoiceCommand';
+import { VoiceControls } from '../VoiceUi';
+import { announceText } from '../transit/feedback';
+import { VOICE } from '../transit/voiceMessages';
 
-// 경로 이탈 판단 기준(m). 스마트폰 GPS는 개활지에서도 오차가 5~15m 정도 나서, 그보다 낮게
-// 잡으면 정상 보행 중에도 오탐이 잦다 — 보행 내비게이션에서 통상 쓰는 20~30m대 중간값으로 설정
+// 경로 이탈 판단 기준(m) — GPS 오차보다 크게 설정
 const DEVIATION_THRESHOLD_M = 25;
-// 위치가 threshold를 몇 번 연속으로 넘어야 "진짜 이탈"로 확정할지.
-// useLocationTracking이 대략 2~3초/3m 간격으로 갱신되므로 3회 연속(약 6~9초)이면 GPS 튐 한두 번으로는
-// 오탐하지 않으면서도 실제 이탈은 충분히 빨리 잡아낼 수 있음
+// 이탈 확정에 필요한 연속 초과 횟수 (GPS 튐 오탐 방지)
 const DEVIATION_CONFIRM_COUNT = 3;
 
-// ───────── legs ─────────
+// ───────── 구간(leg) 목록 ─────────
 const LEGS = [
   { id: 'walk1', icon: 'walk' as IconName, label: '도보 2분' },
   { id: 'bus', icon: 'bus' as IconName, label: '273번 · 4정거장' },
@@ -41,7 +41,7 @@ interface JourneyStep {
   sub: string;
   around?: AroundItem[];
   transit?: TransitStep;
-  category?: WaypointCategory; // 실제 경로(waypoint) 스텝에만 존재 — 목업 데모에는 없음(TTS 트리거 구분용)
+  category?: WaypointCategory;
 }
 
 const JOURNEY: JourneyStep[] = [
@@ -66,8 +66,6 @@ const CAT_COLOR = (t: Theme, cat: string): string => (({ 안전: t.status.safe.f
 const CAT_LEVEL: Record<string, Level> = { 위험: 'danger', 주의: 'caution' };
 
 // ───────── 실제 경로 waypoint(STAIR/CROSSWALK/TURN) -> around 마커 변환 ─────────
-// 백엔드 WaypointCategory와 동일한 3분류를 그대로 마커 아이콘/색으로 매핑.
-// TURN은 티맵 문구에 좌회전/우회전 키워드가 있으면 그 방향 아이콘을, 없으면(직진 등) 직진 화살표를 씀
 const CATEGORY_ICON: Record<WaypointCategory, IconName> = { STAIR: 'stairs', CROSSWALK: 'cross', TURN: 'arrowUp' };
 const CATEGORY_CAT_LABEL: Record<WaypointCategory, string> = { STAIR: '위험', CROSSWALK: '안전', TURN: '시설' };
 
@@ -88,7 +86,7 @@ function aroundItemForStep(s: RouteStep): AroundItem {
   return { icon, name: s.text, bearing, dist: `${s.distToNext ?? 0}m`, cat: CATEGORY_CAT_LABEL[s.category] };
 }
 
-// ───────── leg progress bar ─────────
+// ───────── 구간 진행 바 (leg progress bar) ─────────
 function LegBar({ currentLeg }: { currentLeg: string }) {
   const t = useTheme();
   const curIdx = LEGS.findIndex((l) => l.id === currentLeg);
@@ -114,38 +112,7 @@ function LegBar({ currentLeg }: { currentLeg: string }) {
   );
 }
 
-// ───────── mini map (하드코딩 SVG placeholder) ─────────
-// 실제 렌더링에는 더 이상 쓰이지 않음(KakaoMap.tsx로 교체됨) — 삭제하지 말라는 요청에 따라
-// 원본 그대로 남겨둠. 카카오맵 로딩 실패 등 롤백이 필요하면 아래 <KakaoMap .../> 자리에
-// <MiniMap progress={...} />로 다시 바꿔 끼우면 됨.
-function MiniMap({ progress }: { progress: number }) {
-  const t = useTheme();
-  const isC = t.id === 'contrast';
-  const pts: [number, number][] = [[40, 110], [40, 60], [200, 60], [200, 30], [320, 30]];
-  const segLen = pts.slice(1).map((p, i) => Math.hypot(p[0] - pts[i][0], p[1] - pts[i][1]));
-  const total = segLen.reduce((a, b) => a + b, 0);
-  let target = progress * total, mx = pts[0][0], my = pts[0][1];
-  for (let i = 0; i < segLen.length; i++) {
-    if (target <= segLen[i]) { const f = segLen[i] ? target / segLen[i] : 0; mx = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * f; my = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * f; break; }
-    target -= segLen[i];
-  }
-  return (
-    <View style={[styles.miniMap, { borderRadius: t.radius, borderWidth: t.borderW, borderColor: t.border, backgroundColor: isC ? '#ffffff' : '#e9eef8' }]}>
-      <Svg width="100%" height="100%" viewBox="0 0 360 140" preserveAspectRatio="none">
-        {[40, 90].map((y) => <Line key={y} x1={0} y1={y} x2={360} y2={y} stroke={t.border} strokeWidth={1} opacity={0.6} />)}
-        {[120, 240].map((x) => <Line key={x} x1={x} y1={0} x2={x} y2={140} stroke={t.border} strokeWidth={1} opacity={0.6} />)}
-        <Path d="M40 110 L40 60 L200 60 L200 30 L320 30" fill="none" stroke={withAlpha(t.primary, 0.3)} strokeWidth={6} strokeLinecap="round" strokeLinejoin="round" />
-        <Path d="M40 110 L40 60 L200 60 L200 30 L320 30" fill="none" stroke={t.primary} strokeWidth={4} strokeLinecap="round" strokeLinejoin="round" strokeDasharray="4 7" />
-        <Circle cx={40} cy={110} r={6} fill={t.surface} stroke={t.primary} strokeWidth={3} />
-        <Circle cx={320} cy={30} r={7} fill={t.status.safe.fg} />
-        <Circle cx={mx} cy={my} r={9} fill={t.primary} stroke={t.surface} strokeWidth={3} />
-      </Svg>
-      <Text style={[styles.miniMapLabel, { color: t.textFaint }]}>실시간 경로</Text>
-    </View>
-  );
-}
-
-// ───────── transit visuals (bus number / signal / ride / bell / stairs) ─────────
+// ───────── 대중교통 안내 화면 (버스 번호 / 탑승 신호 / 승차 / 하차벨 / 계단) ─────────
 function Ripple({ color, delay }: { color: string; delay: number }) {
   const v = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -206,7 +173,6 @@ function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boole
       </Card>
     );
   }
-  // bell / stairs / gap
   const map: Record<string, { ic: IconName; cl: Level; cap: string; val: string }> = {
     stairs: { ic: 'stairs', cl: 'danger', cap: '하차 계단 감지', val: '천천히, 한 발씩' },
     gap: { ic: 'gap', cl: 'danger', cap: '승강장 간격 넓음', val: '천천히, 한 발씩' },
@@ -227,7 +193,7 @@ function TransitVisual({ step, sending, t }: { step: TransitStep; sending: boole
   );
 }
 
-// ───────── around panel (walking legs) ─────────
+// ───────── 주변 안내 패널 (도보 구간) ─────────
 function AroundPanel({ items }: { items: AroundItem[] }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
@@ -283,24 +249,33 @@ function ArrivePanel() {
   );
 }
 
-// ───────── main screen ─────────
+// ───────── 메인 화면 ─────────
 export function NavigateScreen({
   playing, big, onBack, origin, destination, route, guidance, onSearchOrigin, onSearchDestination,
-  onComplete, completing, completed, completeError, currentLocation, onDeviated,
+  onComplete, completing, completed, completeError, currentLocation, onDeviated, onRetryRoute,
 }: {
   playing?: boolean; big?: boolean; onBack?: () => void; origin?: Place | null; destination?: Place | null;
   route?: RouteResponse | null; guidance?: GuidanceMessage | null; onSearchOrigin?: () => void; onSearchDestination?: () => void;
   onComplete?: () => void; completing?: boolean; completed?: boolean; completeError?: string | null;
-  currentLocation?: Coords | null; onDeviated?: () => void; // 경로 이탈 확정 시 호출 — 부모가 재탐색(후보 화면 전환)을 담당
+  currentLocation?: Coords | null; onDeviated?: () => void;
+  onRetryRoute?: () => void;   // 저장된 경로가 없을 때(경로 id 없음) 경로 후보 화면으로 다시 보내 저장을 재시도 / no saved route → reopen candidates to retry saving
 }) {
   const t = useTheme();
   const setAmbient = useAmbient();
+  // 음성 "경로 저장": 서버는 경로 선택(POST /api/navigation/route) 시점에 Navigation을 저장하므로 navigationId가 있으면 저장돼 있다고 알려주고, 없으면 재시도
+  const voice = useVoiceCommand('navigate', {
+    SAVE_ROUTE: () => {
+      if (route?.navigationId != null) { announceText(VOICE.routeSaved, false); return; }
+      if (!destination) { announceText(VOICE.needDestination, false); return; }
+      announceText(VOICE.routeNotSaved, false);
+      onRetryRoute?.();
+    },
+  });
   const [i, setI] = useState(0);
   const [off, setOff] = useState(false);
   const [haptic, setHaptic] = useState(false);
   const [sending, setSending] = useState(false);
 
-  // route가 있으면 실제 티맵 턴바이턴 안내로, 없으면 목업(버스 탑승 포함) 시연 데이터로 진행
   const journey: JourneyStep[] = useMemo(() => {
     if (!route) return JOURNEY;
     const steps = parseRouteSteps(route.routeData).map((s): JourneyStep => ({
@@ -326,28 +301,22 @@ export function NavigateScreen({
   }, [i, journey]);
   useEffect(() => { setAmbient(off ? 'danger' : step.level); }, [off]);
 
-  // 실제 경로 웨이포인트 안내 TTS — 계단/횡단보도(STAIR/CROSSWALK)는 기존 발화를 끊고 즉시,
-  // 일반 회전/직진 안내(TURN)는 낮은 우선순위로 재생 (목업 데모 스텝엔 category가 없어 대상에서 제외)
   useEffect(() => {
     if (!step.category) return;
     const urgent = step.category === 'STAIR' || step.category === 'CROSSWALK';
     speakWithPriority(step.text, urgent);
   }, [i, journey]);
 
-  // 경로 좌표(폴리라인) — route가 바뀔 때만 다시 파싱. [lng, lat] 순서(GeoJSON 표준)
   const routePath = useMemo(() => (route ? extractPath(route.routeData) : []), [route]);
-  // KakaoMap에 넘길 형태({lat, lng})로 변환 — routePath가 바뀔 때만(=route가 바뀔 때만) 다시 계산
   const kakaoRoutePath = useMemo(() => routePath.map(([lng, lat]) => ({ lat, lng })), [routePath]);
-  const offTrackStreakRef = useRef(0); // 연속으로 threshold를 넘은 횟수 (디바운스용)
-  const deviationConfirmedRef = useRef(false); // 이탈을 이미 보고했는지 (재탐색 화면 전환 대기 중 중복 트리거 방지)
+  const offTrackStreakRef = useRef(0);
+  const deviationConfirmedRef = useRef(false);
 
-  // 새 경로가 적용되면 이탈 판단 상태 초기화
   useEffect(() => {
     offTrackStreakRef.current = 0;
     deviationConfirmedRef.current = false;
   }, [route]);
 
-  // 이탈 확정 처리 — 기존 UI(진동/경고 표시) 재사용 + TTS 안내 + 부모에게 재탐색 요청
   const confirmDeviation = () => {
     if (deviationConfirmedRef.current) return;
     deviationConfirmedRef.current = true;
@@ -357,8 +326,6 @@ export function NavigateScreen({
     onDeviated?.();
   };
 
-  // 현재 위치가 갱신될 때마다 경로와의 최단거리를 확인 — threshold를 DEVIATION_CONFIRM_COUNT회
-  // 연속으로 넘어야 이탈로 확정 (GPS가 한두 번 튀는 것만으로 오탐하지 않도록)
   useEffect(() => {
     if (!route || !currentLocation || routePath.length < 2 || deviationConfirmedRef.current) return;
     const point: [number, number] = [currentLocation.longitude, currentLocation.latitude];
@@ -413,6 +380,15 @@ export function NavigateScreen({
         </TouchableOpacity>
       </Card>
 
+      <VoiceControls
+        available={voice.available}
+        listening={voice.listening}
+        permissionDenied={voice.permissionDenied}
+        label="음성으로 경로 저장"
+        onToggle={() => { if (voice.listening) voice.stop(); else voice.start(VOICE.navigatePrompt); }}
+        onOpenSettings={voice.openSettings}
+      />
+
       {!route ? (
         <View style={styles.emptyStateBox}>
           <Icon name="pin" size={40} color={t.textFaint} sw={1.8} />
@@ -420,8 +396,6 @@ export function NavigateScreen({
         </View>
       ) : (
       <>
-      {/* MiniMap(하드코딩 SVG placeholder) 대신 실제 카카오맵으로 표시.
-          currentLocation이 아직 없으면(GPS 최초 fix 전) 지도를 그릴 좌표가 없으므로 로딩 표시 */}
       {currentLocation ? (
         <KakaoMap latitude={currentLocation.latitude} longitude={currentLocation.longitude} height={132} routePath={kakaoRoutePath} />
       ) : (
@@ -447,7 +421,7 @@ export function NavigateScreen({
           <Icon name="chevronL" size={22} color={t.text} sw={2.4} />
         </TouchableOpacity>
         {(() => {
-          const canComplete = atEnd && !!route; // 실제 경로일 때만 완료 처리 가능 (목업 데이터엔 navigationId가 없음)
+          const canComplete = atEnd && !!route;
           const nextDisabled = atEnd ? (!canComplete || completed || completing) : false;
           const onPress = () => {
             if (!atEnd) { setI((v) => Math.min(journey.length - 1, v + 1)); return; }
@@ -470,8 +444,6 @@ export function NavigateScreen({
 
       {completeError ? <Text style={[styles.completeErrorText, { color: t.status.danger.fg }]}>{completeError}</Text> : null}
 
-      {/* 실내 등 GPS가 잘 안 잡히는 환경에서 이탈 감지~재탐색 파이프라인 전체를 수동으로 확인할 수 있는 테스트 버튼.
-          confirmDeviation()을 실제 GPS 판정과 동일하게 호출하므로 연출이 아니라 진짜 이탈 처리가 실행됨 */}
       <TouchableOpacity onPress={confirmDeviation} style={[ctrlStyle(t), styles.deviateButtonInner, { borderColor: withAlpha(t.status.danger.fg, 0.45) }]}>
         <Icon name="alert" size={18} color={t.status.danger.fg} sw={2.2} />
         <Text style={[styles.deviateText, { color: t.status.danger.fg }]}>경로 이탈 감지 테스트</Text>
@@ -489,7 +461,6 @@ const styles = StyleSheet.create({
   legChip: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999 },
   legChipText: { fontSize: 12.5, fontWeight: '800' },
   miniMap: { height: 132, overflow: 'hidden' },
-  miniMapLabel: { position: 'absolute', bottom: 8, right: 10, fontSize: 11 },
   ripple: { position: 'absolute', width: 84, height: 84, borderRadius: 999, borderWidth: 2 },
   flex1: { flex: 1 },
   busNumberCard: { overflow: 'hidden' },

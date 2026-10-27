@@ -13,11 +13,15 @@ import { useLiveDetection, DetectionMessage } from '../hooks/useLiveDetection';
 import { useDemoDetection } from '../hooks/useDemoDetection';
 import { completeWalk, AuthExpiredError } from '../api';
 import { GuidanceMessage } from '../hooks/useGuidanceSocket';
+import { useVoiceCommand, type VoiceCommandApi } from '../hooks/useVoiceCommand';
+import { VoiceControls } from '../VoiceUi';
+import { announceText } from '../transit/feedback';
+import { VOICE } from '../transit/voiceMessages';
 
 interface Scene { level: Level; text: string; sub: string; objects: SceneObj[]; haptic?: boolean; traffic?: 'red' | 'green'; }
 
 const DEFAULT_SCENE: Scene = { level: 'safe', text: '전방을 인식하고 있습니다', sub: '카메라로 실시간 분석 중', objects: [] };
-const SCENE_HOLD_MS = 4000; // 새 감지가 없으면 이 시간 뒤 기본 상태로 복귀 (오래된 경고가 화면에 남지 않도록)
+const SCENE_HOLD_MS = 4000;
 
 // YOLO 클래스명 -> 아이콘 (매핑에 없는 클래스는 일반 경고 아이콘으로 대체)
 const CLASS_ICON: Record<string, IconName> = {
@@ -32,8 +36,7 @@ const iconForClass = (cls?: string): IconName => (cls && CLASS_ICON[cls]) || 'al
 // 방향 문자열 -> SceneView가 쓰는 bearing 값 (기존 데모 데이터의 좌/중/우 값 범위를 그대로 따름)
 const DIRECTION_BEARING: Record<string, number> = { '왼쪽': -0.5, '정면': 0, '오른쪽': 0.5 };
 
-// AI 서버는 실측 거리가 아니라 0~1 근접도만 주므로, SceneView의 반경(최대 3.6m) 기준으로
-// 근접도가 높을수록 가깝게 보이도록 대략적으로 환산 (정확한 거리값이 아닌 시각화용 근사치)
+// 0~1 근접도를 SceneView 반경 기준 거리로 근사 환산
 const proximityToMeters = (p: number) => Math.max(0.3, 3.6 * (1 - p));
 
 function levelFromPriority(priority: number): Level {
@@ -97,17 +100,13 @@ function TrafficCard({ state }: { state: 'red' | 'green' }) {
   );
 }
 
-// AI 서버 연결 상태 표시. 인식 모드(실시간/데모) 전환은 보행 시작 전 화면(CameraGateScreen)에서
-// 하도록 하고, 실제 카메라/데모 영상 화면은 아래 SceneView 박스가 보여준다(카메라 세션은 기기당
-// 하나만 열어야 리소스 충돌이 없으므로, 여기서는 상태 아이콘/텍스트만 담당한다).
+// AI 서버 연결 상태 표시 (인식 모드 전환은 CameraGateScreen에서)
 function CameraStatusRow({ status, playing, demo }: {
   status: 'connecting' | 'connected' | 'disconnected' | 'error';
   playing: boolean;
   demo: boolean;
 }) {
   const t = useTheme();
-  // 일시정지 중에는 disconnected 상태가 정상 동작이므로, "연결 끊김" 경고색이 아니라
-  // 중립적인 "일시정지" 표시로 보여준다 (그래야 사용자가 오류로 오해하지 않음)
   const cfg = !playing
     ? { c: t.textDim, label: '일시정지됨' }
     : {
@@ -148,30 +147,24 @@ export function WalkScreen({ playing, setPlaying, big, guidance, demoMode }: { p
   const setAmbient = useAmbient();
   const [scene, setScene] = useState<Scene>(DEFAULT_SCENE);
   const [haptic, setHaptic] = useState(false);
-  const [walkStartTime, setWalkStartTime] = useState<number | null>(null); // 보행 시작 시각
+  const [walkStartTime, setWalkStartTime] = useState<number | null>(null);
   const holdTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const obstacleCountRef = useRef(0); // 보행 중 danger로 감지된 횟수 (보행 기록 저장용)
+  const obstacleCountRef = useRef(0);
 
   const { location, errorMsg, getRoute, getTotalDistance, resetRoute } = useLocationTracking(playing);
-  // 보행 "종료" 처리(저장+리셋) 중인지 여부 — 일시정지와 달리 완전한 종결 상태이므로,
-  // 저장이 끝나 누적값이 리셋되기 전까지는 "다시 시작"으로 재개할 수 없게 잠근다
-  // (레이스: completeWalk() 네트워크 요청이 끝나기 전에 버튼을 눌러 이전 구간 값 위에 새 보행이 겹쳐 쌓이는 것 방지)
+  // 보행 종료(저장+리셋) 처리 중 여부 — 끝나기 전에는 재시작 잠금
   const [ending, setEnding] = useState(false);
-  // 데모 모드일 때는 라이브 카메라 훅을 비활성화(enabled=false)만 시켜둔다 — 코드는 그대로 남기고
-  // 카메라/WS 연결만 켜지지 않게 해서, demoMode를 끄면 원래 라이브 흐름이 그대로 복원된다.
   const { cameraRef, onCameraReady, pictureSize, status: liveStatus, detection: liveDetection } = useLiveDetection(!demoMode && playing);
   const { status: demoStatus, detection: demoDetection } = useDemoDetection(demoMode && playing);
   const aiStatus = demoMode ? demoStatus : liveStatus;
   const detection = demoMode ? demoDetection : liveDetection;
 
-  // 보행이 처음 시작되는 시점의 시각을 기록
   useEffect(() => {
     if (playing && walkStartTime === null) {
       setWalkStartTime(Date.now());
     }
   }, [playing, walkStartTime]);
 
-  // AI 서버가 새 감지 결과를 보내올 때마다 화면 상태 갱신 + 일정 시간 뒤 기본 상태로 복귀
   useEffect(() => {
     if (!detection) return;
     if (detection.priority <= 1) obstacleCountRef.current += 1;
@@ -197,36 +190,43 @@ export function WalkScreen({ playing, setPlaying, big, guidance, demoMode }: { p
     setHaptic(false);
   }, [scene]);
 
-  // 보행 종료: 이동 기록을 서버에 저장하고, 다음 보행을 위해 누적값을 리셋
   const handleEndWalk = async () => {
-    if (ending) return; // 저장 처리 중 중복 탭 방지(연타 시 completeWalk가 두 번 나가는 것 방지)
+    if (ending) return;
     setPlaying(() => false);
-    setEnding(true); // 저장이 끝나기 전까지 "다시 시작" 버튼 잠금
+    setEnding(true);
 
     const routeData = getRoute();
     const totalDistance = getTotalDistance();
-    const totalTime = walkStartTime ? Math.floor((Date.now() - walkStartTime) / 1000) : 0; // 초 단위
-    const obstacleCount = obstacleCountRef.current; // AI가 danger로 감지한 횟수
+    const totalTime = walkStartTime ? Math.floor((Date.now() - walkStartTime) / 1000) : 0;
+    const obstacleCount = obstacleCountRef.current;
 
     try {
       await completeWalk(routeData, totalDistance, totalTime, obstacleCount);
     } catch (e) {
       if (e instanceof AuthExpiredError) {
-        // 비로그인(또는 세션 만료) 상태 — 보행 종료 자체는 정상 진행하고, 기록 저장만 안내만 하고 넘어간다
-        // (강제로 로그인 화면으로 보내지 않음: walk 모드는 비로그인으로도 이용 가능해야 하므로)
         Alert.alert('기록이 저장되지 않았습니다', '로그인하면 보행 기록이 저장됩니다.');
       } else {
         console.error('보행 기록 저장 실패:', e);
       }
     } finally {
-      // "다시 시작"으로 다음 보행이 시작될 때 이전 구간 값이 섞여 WalkLog가
-      // 중복/누적 저장되지 않도록, 성공·실패 여부와 무관하게 항상 초기화한다
       obstacleCountRef.current = 0;
       setWalkStartTime(null);
       resetRoute();
-      setEnding(false); // 잠금 해제 — 이제부터는 완전히 새로운 보행으로 취급됨
+      setEnding(false);
     }
   };
+
+  // 음성: "보행 종료/끝/그만" → "기록을 저장할까요?" 재확인 → 긍정이면 기존 handleEndWalk. 청취는 마이크 버튼으로만 시작하고 긴급 안내 중에는 시작/유지하지 않는다
+  const voiceRef = useRef<VoiceCommandApi | null>(null);
+  const voice = useVoiceCommand('walk', {
+    END_WALK: async () => {
+      if (ending) return;
+      const answer = await voiceRef.current?.confirm(VOICE.confirmEndWalk);
+      if (answer === 'YES') { announceText(VOICE.walkEnded, false); await handleEndWalk(); }
+      else if (answer === 'NO') announceText(VOICE.walkContinue, false);
+    },
+  });
+  voiceRef.current = voice;
 
   return (
     <View style={styles.container}>
@@ -253,7 +253,6 @@ export function WalkScreen({ playing, setPlaying, big, guidance, demoMode }: { p
       <CaptionBar level={scene.level} text={scene.text} sub={scene.sub} speaking={playing} big={big} />
 
       <View style={styles.controlsRow}>
-        {/* 종료 처리(저장+리셋) 중에는 비활성화 — 리셋 전에 재개돼 이전 구간이 새 보행에 섞이는 것 방지 */}
         <TouchableOpacity onPress={() => setPlaying((p) => !p)} disabled={ending} style={[ctrlStyle(t), styles.playButtonInner, ending ? styles.disabled : null]}>
           <Text style={[styles.playLabel, { color: t.text }]}>{ending ? '저장 중…' : playing ? '일시정지' : '다시 시작'}</Text>
         </TouchableOpacity>
@@ -266,6 +265,15 @@ export function WalkScreen({ playing, setPlaying, big, guidance, demoMode }: { p
       >
         <Text style={[styles.endButtonLabel, { color: t.status.danger.fg }]}>보행 종료</Text>
       </TouchableOpacity>
+
+      <VoiceControls
+        available={voice.available}
+        listening={voice.listening}
+        permissionDenied={voice.permissionDenied}
+        label="음성으로 보행 종료"
+        onToggle={() => { if (voice.listening) voice.stop(); else voice.start(VOICE.walkPrompt); }}
+        onOpenSettings={voice.openSettings}
+      />
     </View>
   );
 }

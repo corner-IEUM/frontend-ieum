@@ -14,19 +14,24 @@ import { AccountScreen } from './src/screens/Account';
 import { CameraGateScreen } from './src/screens/CameraGate';
 import { PlaceSearchScreen } from './src/screens/PlaceSearch';
 import { RouteCandidatesScreen } from './src/screens/RouteCandidates';
+import { TransitCandidatesScreen } from './src/screens/TransitCandidates';
+import { TransitGuideScreen } from './src/screens/TransitGuide';
+import { toTransitPlace } from './src/transit/types';
+import { useTransitNavigation } from './src/hooks/useTransitNavigation';
+import { TransitConfirmBar } from './src/transit/ConfirmBar';
+import { expoSttAdapter } from './src/transit/expoSttAdapter';
 import { WalkLogHistoryScreen } from './src/screens/WalkLogHistory';
 import { NavigationHistoryScreen } from './src/screens/NavigationHistory';
 import { Place, RouteCandidate, RouteResponse, searchRouteCandidates, createRoute, checkNearbyHazards, completeNavigation, AuthExpiredError, getToken, getMyInfo, DEFAULT_DEMO_MODE } from './src/api';
 import { useLocationTracking } from './src/hooks/useLocationTracking';
 import { useGuidanceSocket } from './src/hooks/useGuidanceSocket';
 
-type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates' | 'walkLogHistory' | 'navigationHistory';
+type ScreenId = 'home' | 'walk' | 'navigate' | 'settings' | 'account' | 'camera' | 'placeSearch' | 'routeCandidates' | 'transitCandidates' | 'transitGuide' | 'walkLogHistory' | 'navigationHistory';
 type UserInfo = { nickname: string; email: string };
 const TABS: { id: ScreenId; icon: IconName; label: string }[] = [
   { id: 'home', icon: 'home', label: '홈' },
   { id: 'walk', icon: 'walk', label: '일반보행' },
   { id: 'navigate', icon: 'pin', label: '길찾기' },
-  // 이동경로 저장(보행 기록) 화면으로 이동하는 탭
   { id: 'walkLogHistory', icon: 'clock', label: '기록' },
 ];
 
@@ -58,8 +63,6 @@ function TweaksModal({ visible, onClose, tw, set, t }: { visible: boolean; onClo
             </TouchableOpacity>
           </View>
 
-          {/* 디자인 방향(direction)·강조색(accent) 설정 UI는 제거하고, App 쪽 초기값(light / #2f6bff)으로 고정 —
-              tw.direction·tw.accent state와 set('direction'|'accent', ...)는 theme 적용 로직에서 계속 쓰이므로 그대로 둠 */}
 
           <View style={{ gap: 10 }}>
             <Text style={{ fontSize: 13, fontWeight: '800', letterSpacing: 0.5, color: t.textDim }}>안내</Text>
@@ -85,13 +88,10 @@ function IeumApp() {
   const [tw, setTw] = useState({ direction: 'light' as DirId, accent: '#2f6bff', autoGuide: true, captionBig: false });
   const set = (k: string, v: any) => setTw((p) => ({ ...p, [k]: v }));
   const [screen, setScreen] = useState<ScreenId>('home');
-  // 로그인 상태 — Account.tsx 로컬 state였던 걸 끌어올림: handleMaybeAuthExpired 등 여러 화면/콜백이 함께 참조하기 때문
   const [authed, setAuthed] = useState(false);
   const [userInfo, setUserInfo] = useState<UserInfo | null>(null);
-  // 저장된 토큰 확인 중 여부 — 확인이 끝나기 전에는 계정 화면에 로그인 폼이 깜빡 보이면 안 됨
   const [checkingAuth, setCheckingAuth] = useState(true);
 
-  // 앱 최초 실행 시 저장된 토큰이 있는지 확인해서 로그인 상태를 복원 (기존 Account.tsx 로직 이동)
   React.useEffect(() => {
     (async () => {
       const token = await getToken();
@@ -113,24 +113,19 @@ function IeumApp() {
     setUserInfo(info ?? null);
   };
 
-  // 토큰 만료/누락(401·403 → AuthExpiredError)을 감지했을 때 공통으로 처리하는 지점 —
-  // 사용자에게 안내하고 계정(로그인) 화면으로 강제 전환한다
+  // 토큰 만료(401/403) 시 사용자에게 안내하고 계정 화면으로 전환
   const handleAuthExpired = () => {
     setAuthed(false);
     setUserInfo(null);
     Alert.alert('로그인이 만료되었습니다', '다시 로그인해주세요');
     setScreen('account');
   };
-  // walk/navigate 등은 비로그인으로도 진입 가능하므로, 로그인 없이 쓴 기능이 인증 필요 API에서
-  // 401/403을 받는 것은 "정상"이다 — 이 경우까지 handleAuthExpired()로 로그인 화면에 강제로
-  // 돌려보내면 게스트 이용이 막혀버리므로, 실제로 로그인돼 있던 세션이 끊긴 경우(authed===true)에만
-  // handleAuthExpired()를 호출하고 게스트는 조용히 무시한다
+  // 게스트의 401/403은 무시하고, 로그인돼 있던 세션이 끊긴 경우에만 로그인 화면으로 전환
   const handleMaybeAuthExpired = () => {
     if (authed) handleAuthExpired();
   };
   const [showRec, setShowRec] = useState(true);
-  // 일반보행 인식 모드(실시간 카메라 / 데모 영상) — CameraGateScreen의 토글로 전환하고,
-  // WalkScreen이 이 값에 따라 /ws/detect/live(라이브)와 /ws/detect(데모) 중 하나로 붙는다
+  // 일반보행 인식 모드(실시간 카메라 / 데모 영상)
   const [demoMode, setDemoMode] = useState(DEFAULT_DEMO_MODE);
   const [playing, setPlaying] = useState(true);
   const [ambient, setAmbient] = useState<Level | 'idle'>('idle');
@@ -139,7 +134,6 @@ function IeumApp() {
   const [origin, setOrigin] = useState<Place | null>(null);
   const [destination, setDestination] = useState<Place | null>(null);
   const [searchTarget, setSearchTarget] = useState<'origin' | 'destination'>('destination');
-  // 출발지를 직접 고르지 않았다면 현재 GPS 위치를 기본 출발지로 사용 (지오코딩 없이 좌표만 사용, 라벨만 "현재 위치")
   const effectiveOrigin: Place | null = origin ?? (currentLocation
     ? { placeName: '현재 위치', roadAddress: '', lng: currentLocation.longitude, lat: currentLocation.latitude, distance: null }
     : null);
@@ -166,12 +160,23 @@ function IeumApp() {
     }
   };
 
+  // 대중교통 출발/도착 (새 객체면 재조회되므로 메모이즈) / Memoized so new objects don't retrigger fetch
+  const transitQuery = useMemo(() => candidateQuery
+    ? { origin: toTransitPlace(candidateQuery.origin), destination: toTransitPlace(candidateQuery.destination) }
+    : null, [candidateQuery]);
+  // 대중교통 leg 상태 관리 — 앱 재시작 시 저장된 세션 id로 복구 / Transit leg state; restores session after restart
+  const transitNav = useTransitNavigation({
+    enabled: authed,
+    onAuthExpired: handleMaybeAuthExpired,
+    onRestored: () => setScreen('transitGuide'),
+  });
+
   const [activeRoute, setActiveRoute] = useState<RouteResponse | null>(null);
   const [routeCreating, setRouteCreating] = useState(false);
   const [routeCreateError, setRouteCreateError] = useState<string | null>(null);
 
-  const selectCandidate = async (c: RouteCandidate) => {
-    if (!candidateQuery) return;
+  const selectCandidate = async (c: RouteCandidate): Promise<boolean> => {
+    if (!candidateQuery) return false;
     setRouteCreating(true);
     setRouteCreateError(null);
     try {
@@ -180,19 +185,17 @@ function IeumApp() {
       setNavCompleted(false);
       setNavCompleteError(null);
       setScreen('navigate');
+      return true;
     } catch (e) {
       if (e instanceof AuthExpiredError) { handleMaybeAuthExpired(); }
       setRouteCreateError('경로 생성에 실패했습니다.');
+      return false;
     } finally {
       setRouteCreating(false);
     }
   };
 
-  // 길찾기 중 경로 이탈이 확정되면(Navigate.tsx가 GPS로 판단) 현재 GPS 위치를 새 출발지로 삼아
-  // 기존 후보 조회 흐름(fetchCandidates)을 그대로 재사용해 재탐색한다.
-  // effectiveOrigin이 아니라 currentLocation을 직접 쓰는 이유: 사용자가 출발지를 수동으로 검색해
-  // 지정해둔 상태였다면 effectiveOrigin은 그 옛 지점 그대로라, 이탈 후 재탐색에는 맞지 않음 —
-  // 재탐색은 항상 "지금 실제로 있는 위치" 기준이어야 함
+  // 경로 이탈 시 현재 GPS 위치를 출발지로 재탐색
   const handleDeviated = () => {
     if (!currentLocation || !destination) return;
     const liveOrigin: Place = { placeName: '현재 위치', roadAddress: '', lng: currentLocation.longitude, lat: currentLocation.latitude, distance: null };
@@ -220,7 +223,6 @@ function IeumApp() {
 
   React.useEffect(() => { setPlaying(tw.autoGuide); }, [tw.autoGuide]);
 
-  // 일반보행/길찾기 중일 때만 실시간 위험요소 안내(WebSocket 구독 + 위치 갱신마다 체크 트리거) 활성화
   const hazardActive = screen === 'walk' || screen === 'navigate';
   const guidance = useGuidanceSocket(hazardActive);
   React.useEffect(() => {
@@ -255,6 +257,7 @@ function IeumApp() {
         guidance={guidance}
         currentLocation={currentLocation}
         onDeviated={handleDeviated}
+        onRetryRoute={() => { if (destination && effectiveOrigin) fetchCandidates(effectiveOrigin, destination); }}
         onSearchOrigin={() => { setSearchTarget('origin'); setScreen('placeSearch'); }}
         onSearchDestination={() => { setSearchTarget('destination'); setScreen('placeSearch'); }}
         onComplete={completeNav}
@@ -293,14 +296,24 @@ function IeumApp() {
         error={candidatesError}
         onRetry={() => candidateQuery && fetchCandidates(candidateQuery.origin, candidateQuery.destination)}
         onSelect={selectCandidate}
+        onTransit={() => setScreen('transitCandidates')}
         onBack={() => setScreen('navigate')}
         creating={routeCreating}
         createError={routeCreateError}
       />
     ),
-    // 이동경로 저장(보행 기록) 목록 화면
+    transitCandidates: transitQuery ? (
+      <TransitCandidatesScreen
+        origin={transitQuery.origin}
+        destination={transitQuery.destination}
+        onSelected={(session) => { transitNav.startSession(session); setScreen('transitGuide'); }}
+        onWalkSelected={async (route) => { if (!(await selectCandidate(route))) setScreen('routeCandidates'); }} // 실패하면 도보 후보 화면에서 오류 문구 표시
+        onBack={() => setScreen('routeCandidates')}
+        onAuthExpired={handleMaybeAuthExpired}
+      />
+    ) : null,
+    transitGuide: <TransitGuideScreen nav={transitNav} stt={expoSttAdapter} onBack={() => setScreen('routeCandidates')} />,
     walkLogHistory: <WalkLogHistoryScreen onBack={goHome} onAuthExpired={handleMaybeAuthExpired} />,
-    // 길찾기 기록 목록 화면
     navigationHistory: <NavigationHistoryScreen onBack={goHome} onAuthExpired={handleMaybeAuthExpired} />,
   };
 
@@ -311,18 +324,20 @@ function IeumApp() {
           <StatusBar barStyle="dark-content" />
           <LinearGradient colors={(grad.length > 1 ? grad : [grad[0], grad[0]]) as [string, string, ...string[]]} start={{ x: 0.5, y: 0 }} end={{ x: 0.5, y: 1 }} style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }} />
           <SafeAreaView style={{ flex: 1 }} edges={['top', 'bottom']}>
-            {screen === 'camera' ? (
+            {screen === 'camera' || screen === 'transitCandidates' ? ( // 후보 화면은 자체 ScrollView + 하단 고정 음성 바를 가진다
               <View style={{ flex: 1 }}>{screens[screen]}</View>
             ) : (
               <ScrollView style={{ flex: 1 }} contentContainerStyle={{ paddingBottom: 24 }} showsVerticalScrollIndicator={false}>
                 {screens[screen]}
               </ScrollView>
             )}
-            {/* 기록(walkLogHistory) 화면에서도 하단 탭바가 보이도록 조건 추가 */}
+            {/* 탑승/하차 확인 버튼: ScrollView 바깥 하단 고정 (SafeAreaView 하단 안전영역 안) / confirm buttons pinned below the ScrollView */}
+            {screen === 'transitGuide' ? (
+              <TransitConfirmBar uiState={transitNav.uiState} busy={transitNav.busy} onBoard={transitNav.confirmBoarding} onAlight={transitNav.confirmAlighting} />
+            ) : null}
             {screen === 'home' || screen === 'walk' || screen === 'navigate' || screen === 'walkLogHistory' ? <TabBar active={screen} go={go} t={theme} /> : null}
           </SafeAreaView>
 
-          {/* floating Tweaks button */}
           <TouchableOpacity onPress={() => setTweaksOpen(true)} style={{ position: 'absolute', right: 16, bottom: 96, width: 56, height: 56, borderRadius: 999, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.primary, shadowColor: '#16213c', shadowOpacity: 0.28, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 8 }}>
             <Icon name="tune" size={26} color={theme.onPrimary} sw={2.2} />
           </TouchableOpacity>

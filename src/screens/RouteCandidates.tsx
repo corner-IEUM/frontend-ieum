@@ -1,11 +1,16 @@
 // screens/RouteCandidates.tsx — 출발지/목적지가 정해진 뒤 POST /api/navigation/route/candidates 결과를 보여주고 하나를 고르게 함
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, StyleSheet } from 'react-native';
 import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeHeader, Card } from '../ui';
 import { RouteCandidate, Place } from '../api';
+import { speakSequence, stopSpeaking } from '../tts';
+import { useVoiceCommand, type VoiceCommandApi } from '../hooks/useVoiceCommand';
+import { VoiceControls } from '../VoiceUi';
+import { announceText } from '../transit/feedback';
+import { VOICE } from '../transit/voiceMessages';
 
 export function formatDistance(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(1)}km` : `${m}m`;
@@ -67,7 +72,7 @@ function CandidateCard({ candidate, onPress }: { candidate: RouteCandidate; onPr
 }
 
 export function RouteCandidatesScreen({
-  origin, destination, candidates, loading, error, onRetry, onSelect, onBack, creating, createError,
+  origin, destination, candidates, loading, error, onRetry, onSelect, onBack, creating, createError, onTransit,
 }: {
   origin?: Place | null;
   destination?: Place | null;
@@ -79,8 +84,42 @@ export function RouteCandidatesScreen({
   onBack: () => void;
   creating?: boolean;
   createError?: string | null;
+  onTransit?: () => void;
 }) {
   const t = useTheme();
+
+  // ───────── 음성: 후보 낭독 → 청취 → 번호/모드 선택 → "안내를 시작할까요?" 재확인 ─────────
+  const voiceRef = useRef<VoiceCommandApi | null>(null);
+  const listenForCommand = () => { const v = voiceRef.current; if (v?.available) v.start(VOICE.routePrompt); };
+  const narrate = () => {
+    if (!candidates || candidates.length === 0) return;
+    const items = candidates.map((c, i) => VOICE.routeCandidateItem(i + 1, c.label, formatDuration(c.duration), formatDistance(c.distance), c.crosswalks.length, c.stairs.length));
+    speakSequence([VOICE.routeCandidatesIntro(candidates.length), ...items], listenForCommand); // 낭독이 끝까지 재생된 뒤에만 청취 시작
+  };
+  const proposeStart = async (index: number) => {
+    const c = candidates?.[index];
+    if (!c || creating) { announceText(VOICE.noSuchCandidate, false); return; }
+    const answer = await voiceRef.current?.confirm(VOICE.confirmStart(index + 1, c.label));
+    if (answer === 'YES') { announceText(VOICE.startingNavigate, false); onSelect(c); }
+    else if (answer === 'NO') announceText(VOICE.confirmNo, false);
+  };
+  const voice = useVoiceCommand('routeCandidates', {
+    SELECT: (cmd) => proposeStart(cmd.index),
+    START: () => proposeStart(0),
+    MODE: (cmd) => {
+      if (cmd.mode === 'TRANSIT' && onTransit) onTransit();
+      else announceText(cmd.mode === 'TRANSIT' ? VOICE.noSuchMode('TRANSIT') : VOICE.alreadyWalk, false);
+    },
+    REPEAT: () => narrate(),
+  });
+  voiceRef.current = voice;
+
+  useEffect(() => {
+    if (loading || error || !candidates || candidates.length === 0) return;
+    narrate();
+    return () => { stopSpeaking(); }; // 이탈 시 낭독 중단
+  }, [candidates, loading, error]);
+
   return (
     <View style={styles.container}>
       <ModeHeader title="경로 선택" icon="pin" onBack={onBack} />
@@ -121,6 +160,24 @@ export function RouteCandidatesScreen({
         </View>
       )}
 
+      {onTransit ? (
+        <TouchableOpacity accessibilityRole="button" accessibilityLabel="대중교통으로 가는 경로 보기" onPress={onTransit} disabled={creating} style={[styles.transitButton, { borderColor: t.primary, borderWidth: Math.max(t.borderW, 2) }]}>
+          <Icon name="bus" size={24} color={t.primary} sw={2.2} />
+          <Text style={[styles.transitButtonText, { color: t.primary }]}>대중교통 경로 보기</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      {candidates && candidates.length > 0 ? (
+        <VoiceControls
+          available={voice.available}
+          listening={voice.listening}
+          permissionDenied={voice.permissionDenied}
+          label="음성으로 경로 선택"
+          onToggle={() => { if (voice.listening) voice.stop(); else voice.start(VOICE.routePrompt); }}
+          onOpenSettings={voice.openSettings}
+        />
+      ) : null}
+
       {creating ? (
         <View style={styles.creatingRow}>
           <ActivityIndicator color={t.primary} />
@@ -144,6 +201,8 @@ const styles = StyleSheet.create({
   creatingRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10, paddingTop: 20 },
   createErrorBanner: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 12, borderRadius: 14, borderWidth: 1 },
   createErrorText: { flex: 1, fontSize: 13, fontWeight: '700' },
+  transitButton: { minHeight: 64, borderRadius: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10 },
+  transitButtonText: { fontSize: 18, fontWeight: '800' },
   card: { gap: 10 },
   cardHeaderRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   cardLabel: { fontSize: 18, fontWeight: '800', letterSpacing: -0.4 },

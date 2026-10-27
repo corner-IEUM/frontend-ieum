@@ -1,28 +1,29 @@
 // api.ts -API 공통 설정 및 토큰 관리
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AuthExpiredError, LegStateConflictError, ApiStatusError } from './apiErrors';
+import type { TransitPlace, TransitRouteCandidate, TransitSession } from './transit/types';
+import { parseCandidatesResponse, buildRouteRequestBody, parseRouteResponse } from './transit/itineraryParser';
+import { createLocalSession } from './transit/localSession';
 
 // EXPO_PUBLIC_ 접두사 변수는 번들 시점에 process.env로 심어짐 — 값이 없으면 로컬 개발용 IP로 폴백
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? "http://192.168.200.115:8080";
 // AI 서버(FastAPI, YOLO 추론)는 백엔드와 별도 프로세스/포트 — 로컬 IP는 백엔드와 동일 머신 기준
 export const AI_SERVER_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_WS_URL ?? "ws://192.168.200.115:8000/ws/detect/live";
 
-// 데모 모드(/ws/detect, /media/demo.mp4)용 주소는 AI_SERVER_WS_URL과 호스트:포트가 항상 같다.
-// 예전엔 이 둘을 별도의 하드코딩된 IP로 폴백시켰는데, update-ip.sh는 EXPO_PUBLIC_AI_SERVER_WS_URL만
-// 갱신하고 이 둘은 모르기 때문에 PC의 IP가 바뀔 때마다 여기만 옛날 IP로 남아 조용히 깨지는 문제가
-// 있었다 — AI_SERVER_WS_URL에서 host:port만 뽑아 재사용해서 같은 실수가 다시 안 생기게 한다.
+// 데모 모드 주소는 AI_SERVER_WS_URL의 host:port를 재사용
 const AI_SERVER_HOST_PORT = AI_SERVER_WS_URL.replace(/^wss?:\/\//, "").split("/")[0];
-// 데모 모드용: AI 서버가 자체적으로 사전 녹화 영상(config.VIDEO_SOURCE, 기본 data/demo.mp4)을
-// 읽어 감지 결과를 push하는 경로. 클라이언트는 프레임을 보낼 필요 없이 연결만 하면 된다.
+// 데모 모드용 AI 서버 감지 결과 WebSocket 경로 (연결만 하면 됨)
 export const AI_SERVER_DEMO_WS_URL = process.env.EXPO_PUBLIC_AI_SERVER_DEMO_WS_URL ?? `ws://${AI_SERVER_HOST_PORT}/ws/detect`;
-// AI 서버가 정적 파일로도 내려주는 데모 영상(ai/server.py의 /media 마운트) — 화면에 실제로
-// 재생되는 모습을 보여주기 위한 HTTP(스트리밍) 주소.
+// AI 서버가 내려주는 데모 영상 HTTP 주소
 export const DEMO_VIDEO_URL = process.env.EXPO_PUBLIC_DEMO_VIDEO_URL ?? `http://${AI_SERVER_HOST_PORT}/media/demo.mp4`;
 
-// 일반보행 화면의 인식 모드 초기값 — 사용자가 화면의 토글로 언제든 바꿀 수 있지만, 앱을 처음
-// 열었을 때 무엇으로 시작할지는 이 값을 따른다. EXPO_PUBLIC_DEMO_MODE로 오버라이드 가능.
+// 일반보행 인식 모드 초기값 (EXPO_PUBLIC_DEMO_MODE로 오버라이드)
 export const DEFAULT_DEMO_MODE = process.env.EXPO_PUBLIC_DEMO_MODE
   ? process.env.EXPO_PUBLIC_DEMO_MODE === 'true'
   : true;
+
+// 오류 클래스는 RN 의존성 없이 테스트할 수 있도록 apiErrors.ts에 있고 여기서 재export / Error classes live in apiErrors.ts (testable without RN); re-exported here
+export { AuthExpiredError, LegStateConflictError, ApiStatusError };
 
 const TOKEN_KEY = "accessToken";
 
@@ -38,13 +39,6 @@ export async function getToken(){
 export async function clearToken() {
   await AsyncStorage.removeItem(TOKEN_KEY);
 }
-// 토큰 만료/누락으로 인증이 거부됐을 때(401/403) 던지는 에러 — 호출부에서 로그인 화면 전환 등에 사용
-export class AuthExpiredError extends Error {
-  constructor(message = '로그인이 만료되었습니다. 다시 로그인해주세요.') {
-    super(message);
-    this.name = 'AuthExpiredError';
-  }
-}
 // 인증이 필요한 API 요청을 위한 fetch 함수
 export async function authFetch(path: string, options: RequestInit = {}) {
   const token = await getToken();
@@ -54,7 +48,6 @@ export async function authFetch(path: string, options: RequestInit = {}) {
     ...(options.headers || {}),
   };
   const res = await fetch(`${API_BASE_URL}${path}`, { ...options, headers });
-  // 401/403은 토큰이 만료됐거나 아예 없는 경우이므로, 무효 토큰을 지우고 호출부가 알아챌 수 있게 던져준다
   if (res.status === 401 || res.status === 403) {
     await clearToken();
     throw new AuthExpiredError();
@@ -113,8 +106,8 @@ export interface CrosswalkAccessibilitySummary {
 export interface RouteCandidate {
   searchOption: number;
   label: string;
-  distance: number; // m
-  duration: number; // s
+  distance: number;
+  duration: number;
   crosswalks: Crosswalk[];
   stairs: Stair[];
   accessibilitySummary: CrosswalkAccessibilitySummary;
@@ -130,12 +123,12 @@ export async function searchRouteCandidates(startLng: number, startLat: number, 
 }
 export interface RouteResponse {
   navigationId: number;
-  distance: number; // m
-  duration: number; // s
+  distance: number;
+  duration: number;
   crosswalks: Crosswalk[];
   stairs: Stair[];
   accessibilitySummary: CrosswalkAccessibilitySummary;
-  routeData: string; // 티맵 원본 경로 JSON (단계별 안내 파싱용, 4단계에서 사용 예정)
+  routeData: string;
 }
 // 경로 생성/저장 API 요청 함수 (JWT 인증 필요) — 후보 화면에서 하나를 선택했을 때 호출
 export async function createRoute(startLng: number, startLat: number, endLng: number, endLat: number, searchOption: number): Promise<RouteResponse> {
@@ -165,7 +158,7 @@ export async function completeNavigation(navigationId: number, obstacleCnt: numb
 export async function getMyInfo() {
   const res = await authFetch('/api/users/me');
   if (!res.ok) throw new Error('내 정보 조회에 실패했습니다');
-  return res.json(); // { id, email, nickname }
+  return res.json();
 }
 // 보행 종료 시 보행 기록 저장 API 요청 함수 (JWT 인증 필요)
 export async function completeWalk(routeData: unknown, totalDistance: number, totalTime: number, obstacleCount: number) {
@@ -180,8 +173,8 @@ export async function completeWalk(routeData: unknown, totalDistance: number, to
 export interface WalkLog {
   id: number;
   routeData: string;
-  totalDistance: number; // m
-  totalTime: number; // s
+  totalDistance: number;
+  totalTime: number;
   obstacleCount: number;
   createdAt: string;
 }
@@ -191,27 +184,82 @@ export async function getWalkLogs(): Promise<WalkLog[]> {
   if (!res.ok) throw new Error('보행 기록 조회에 실패했습니다');
   return res.json();
 }
-// 저장된 길찾기(Navigation) 기록 한 건 — 백엔드 NavigationHistoryResponse와 필드명 1:1 매칭
-// (place명은 저장되지 않고 좌표만 저장되므로 origin/destination 이름은 여기 없음 — 화면에서 좌표로 표시)
+// 저장된 길찾기(Navigation) 기록 한 건 (백엔드 NavigationHistoryResponse와 동일 필드)
 export interface NavigationHistoryItem {
   id: number;
   startLng: number;
   startLat: number;
   endLng: number;
   endLat: number;
-  distance: number; // m
-  duration: number; // s
+  distance: number;
+  duration: number;
   obstacleCnt: number;
   completed: boolean;
   startTime: string;
   endTime: string | null;
-  routeData: string; // 티맵 원본 경로 JSON
+  routeData: string;
 }
-// 길찾기 기록(Navigation) 목록 조회 API 요청 함수 (JWT 인증 필요)
-// ※ 백엔드가 페이징 없이 유저의 전체 기록을 한 번에 반환함 — 기록이 많이 쌓이면
-//   응답이 커질 수 있으니, 추후 문제가 되면 페이징 파라미터 추가를 검토할 것
+// 길찾기 기록 목록 조회 API 요청 함수 (JWT 인증 필요, 페이징 없음)
 export async function getNavigationHistory(): Promise<NavigationHistoryItem[]> {
   const res = await authFetch('/api/navigation/history');
   if (!res.ok) throw new Error('길찾기 기록 조회에 실패했습니다');
   return res.json();
+}
+// 대중교통 후보 조회 (JWT 필요): transitOptions + 도보 후보(walkOption)를 하나의 후보 목록으로 변환해 반환. 변환은 itineraryParser에서만 한다
+export async function fetchRouteCandidates(origin: TransitPlace, destination: TransitPlace): Promise<TransitRouteCandidate[]> {
+  const params = new URLSearchParams({
+    startLng: String(origin.lng), startLat: String(origin.lat),
+    endLng: String(destination.lng), endLat: String(destination.lat),
+  });
+  const res = await authFetch(`/api/navigation/transit/candidates?${params.toString()}`);
+  if (!res.ok) throw new ApiStatusError(res.status, '대중교통 경로 후보 조회에 실패했습니다');
+  return parseCandidatesResponse(await res.json(), origin, destination);
+}
+// 선택한 경로 확정 (JWT 필요): 서버 itinerary 원본을 그대로 보내고, 응답 navigationId + 후보 legs로 로컬 세션을 만든다
+export async function saveTransitRoute(candidate: TransitRouteCandidate, origin: TransitPlace, destination: TransitPlace): Promise<TransitSession> {
+  const res = await authFetch('/api/navigation/transit/route', {
+    method: 'POST',
+    body: JSON.stringify(buildRouteRequestBody(candidate, origin, destination)),
+  });
+  if (!res.ok) throw new ApiStatusError(res.status, '대중교통 경로 확정에 실패했습니다');
+  const { navigationId, currentLegIndex } = parseRouteResponse(await res.json());
+  return createLocalSession(navigationId, candidate.legs, currentLegIndex);
+}
+
+// 진행 중인 대중교통 세션 id 저장 (앱 재시작 복구용) / Persist session id for restore after restart
+const TRANSIT_SESSION_KEY = 'transitSessionId';
+export async function saveTransitSessionId(id: number | string) {
+  await AsyncStorage.setItem(TRANSIT_SESSION_KEY, String(id));
+}
+export async function getTransitSessionId(): Promise<string | null> {
+  return AsyncStorage.getItem(TRANSIT_SESSION_KEY);
+}
+export async function clearTransitSessionId() {
+  await AsyncStorage.removeItem(TRANSIT_SESSION_KEY);
+}
+// 마지막 서버 세션 상태를 기기에 저장 (앱 복귀/재시작 시 서버 조회가 실패하면 복구용) / Last server session saved on device for offline recovery
+const TRANSIT_SNAPSHOT_KEY = 'transitSessionSnapshot';
+export async function saveTransitSnapshot(session: TransitSession) {
+  await AsyncStorage.setItem(TRANSIT_SNAPSHOT_KEY, JSON.stringify(session));
+}
+export async function getTransitSnapshot(): Promise<TransitSession | null> {
+  const raw = await AsyncStorage.getItem(TRANSIT_SNAPSHOT_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && Array.isArray(parsed.legs) ? parsed : null; // 형식이 이상하면 없는 것으로 취급
+  } catch {
+    return null;
+  }
+}
+export async function clearTransitSnapshot() {
+  await AsyncStorage.removeItem(TRANSIT_SNAPSHOT_KEY);
+}
+// leg 상태 동기화 (JWT 인증 필요, 멱등): 본문은 {currentLegIndex, currentLegState}, 응답은 204(본문 없음)라 파싱하지 않는다
+export async function patchLegState(id: number | string, body: { currentLegIndex: number; currentLegState: string }): Promise<void> {
+  const res = await authFetch(`/api/navigation/${id}/leg-state`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new ApiStatusError(res.status, 'leg 상태 동기화에 실패했습니다');
 }

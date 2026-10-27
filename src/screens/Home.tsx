@@ -7,6 +7,10 @@ import { Icon } from '../Icon';
 import { useTheme } from '../theme-context';
 import { withAlpha } from '../theme';
 import { ModeButton, SectionTitle, shadow } from '../ui';
+import { useVoiceCommand } from '../hooks/useVoiceCommand';
+import { VoiceControls } from '../VoiceUi';
+import { announceText } from '../transit/feedback';
+import { VOICE } from '../transit/voiceMessages';
 
 export function Wordmark({ size = 26 }: { size?: number }) {
   const t = useTheme();
@@ -47,6 +51,10 @@ function RecommendBanner({ onAccept, onDismiss }: { onAccept: () => void; onDism
 export function HomeScreen({ go, showRec, setShowRec }: { go: (s: string) => void; showRec: boolean; setShowRec: (b: boolean) => void }) {
   const t = useTheme();
   const isC = t.id === 'contrast';
+  // 음성: "길찾기 시작/안내 시작/출발" → 길찾기 화면 (홈 허용 명령은 이것뿐)
+  const voice = useVoiceCommand('home', {
+    START: () => { announceText(VOICE.startingNavigate, false); go('navigate'); },
+  });
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
@@ -68,9 +76,17 @@ export function HomeScreen({ go, showRec, setShowRec }: { go: (s: string) => voi
         <Text style={[styles.gpsText, { color: t.textDim }]}>GPS 연결됨</Text>
       </View>
 
+      <VoiceControls
+        available={voice.available}
+        listening={voice.listening}
+        permissionDenied={voice.permissionDenied}
+        label="음성으로 길찾기 시작"
+        onToggle={() => { if (voice.listening) voice.stop(); else voice.start(VOICE.homePrompt); }}
+        onOpenSettings={voice.openSettings}
+      />
+
       {showRec ? <RecommendBanner onAccept={() => { setShowRec(false); go('navigate'); }} onDismiss={() => setShowRec(false)} /> : null}
 
-      {/* primary CTA */}
       <TouchableOpacity activeOpacity={0.9} onPress={() => go('walk')} style={[styles.ctaButton, { borderRadius: t.radius, ...(!isC ? shadow(withAlpha(t.primary, 0.4), 28, 0.32, 6) : {}), borderWidth: isC ? 3 : 0, borderColor: t.primary }]}>
         <LinearGradient colors={isC ? [t.primary, t.primary] : ['#7ea3ff', t.primary, t.primaryDim]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.ctaGradient}>
           <View style={styles.ctaIconCircle}>
@@ -88,9 +104,7 @@ export function HomeScreen({ go, showRec, setShowRec }: { go: (s: string) => voi
       <View style={styles.modesWrap}>
         <ModeButton icon="walk" title="일반보행" desc="동적 장애물 · 신호등 · 거리 경고" onPress={() => go('walk')} />
         <ModeButton icon="pin" title="길찾기" desc="경로 안내 · 주변 설명 · 대중교통 탑승까지" onPress={() => go('navigate')} />
-        {/* 저장된 보행 기록(WalkLog) 목록 화면으로 이동하는 카드 */}
         <ModeButton icon="clock" title="이동경로 저장" desc="지난 보행 기록 · 이동거리 · 소요시간 확인" onPress={() => go('walkLogHistory')} />
-        {/* 저장된 길찾기 기록(Navigation) 목록 화면으로 이동하는 카드 */}
         <ModeButton icon="clock" title="길찾기 기록" desc="지난 길찾기 경로 · 이동거리 · 소요시간 확인" onPress={() => go('navigationHistory')} />
       </View>
     </View>
