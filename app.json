@@ -40,6 +40,12 @@
     },
     "plugins": [
       [
+        "./plugins/withIosMicDescription",
+        {
+          "microphonePermission": "탑승·하차를 음성으로 확인하려면 마이크 접근 권한이 필요합니다."
+        }
+      ],
+      [
         "expo-camera",
         {
           "cameraPermission": "이음이 전방을 인식해 보행을 안내하려면 카메라 접근 권한이 필요합니다.",
@@ -51,6 +57,13 @@
         "expo-location",
         {
           "locationWhenInUsePermission": "이음이 현재 위치를 기반으로 길안내를 제공하려면 위치 접근 권한이 필요합니다."
+        }
+      ],
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "탑승·하차를 음성으로 확인하려면 마이크 접근 권한이 필요합니다.",
+          "speechRecognitionPermission": "탑승·하차를 음성으로 확인하려면 음성 인식 권한이 필요합니다."
         }
       ],
       "expo-status-bar",
